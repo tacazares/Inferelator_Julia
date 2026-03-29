@@ -2,7 +2,7 @@
 GRN
 
 Main function:
-- `combineGRNS2`: Combines GRNs using merged TFs, TFA data, and other metadata.  
+- `refineTFA`: Combines GRNs using merged TFs, TFA data, and other metadata.  
 
 Dependencies:
 - `Data.GeneExpressionData` and `Data.PriorTFAData`
@@ -24,7 +24,7 @@ Dependencies:
     # Export only the function users need
     # export combineGRNS2
 
-function combineGRNS2(data::GeneExpressionData, mergedTFsData::mergedTFsResult, tfaGeneFile::Union{String, Nothing}, priorFile, edgeSS, minTargets,  
+function refineTFA(data::GeneExpressionData, mergedTFsData::mergedTFsResult, tfaGeneFile::Union{String, Nothing}, priorFile, edgeSS, minTargets,  
                         geneExprFile::Union{String, Nothing}=nothing, 
                         targetGeneFile::Union{String, Nothing}=nothing, 
                         potRegFile::Union{String, Nothing}=nothing;
