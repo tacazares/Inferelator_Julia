@@ -109,8 +109,8 @@ module GRN
 
     include("prepareGRN.jl")   # functions that prepare predictor matrices etc.
     include("buildGRN.jl")     # functions that use GrnData / BuildGrn
-    include("combineGRN.jl")   # combineGRNs
-    include("combineGRN2.jl")  # combineGRNS2
+    include("aggregateNetworks.jl")   # combineGRNs
+    include("refineTFA.jl")  # combineGRNS2
 
 
 end

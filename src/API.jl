@@ -1,0 +1,441 @@
+# =============================================================================
+#  InferelatorJL — Public API
+#  src/API.jl
+#
+#  High-level wrapper functions that compose the internal !-mutating calls
+#  into clean, single-responsibility entry points.
+#  All heavy lifting stays in the submodule files; this layer only
+#  orchestrates and exposes a stable interface.
+# =============================================================================
+
+
+# -----------------------------------------------------------------------------
+# STEP 1 · Load & filter all expression data
+# -----------------------------------------------------------------------------
+"""
+    loadData(exprFile, targFile, regFile; tfaGeneFile="", epsilon=0.01)
+
+Load and filter all expression inputs into a `GeneExpressionData` struct.
+
+# Arguments
+- `exprFile`    : Path to gene expression matrix (TSV or Arrow, genes × samples)
+- `targFile`    : Path to target gene list (genes to model as responses)
+- `regFile`     : Path to potential regulator list (candidate TFs)
+- `tfaGeneFile` : Optional path to gene list used for TFA estimation
+- `epsilon`     : Minimum variance threshold for target gene filtering (default 0.01)
+
+# Returns
+`GeneExpressionData` with fields populated:
+`geneExpressionMat`, `targGeneMat`, `potRegMatmRNA`, `tfaGeneMat`
+"""
+function loadData(
+    exprFile::String,
+    targFile::String,
+    regFile::String;
+    tfaGeneFile::String = "",
+    epsilon::Float64    = 0.01
+)::GeneExpressionData
+
+    data = GeneExpressionData()
+    loadExpressionData!(data, exprFile)
+    loadAndFilterTargetGenes!(data, targFile; epsilon = epsilon)
+    loadPotentialRegulators!(data, regFile)
+    processTFAGenes!(data, tfaGeneFile)
+    return data
+end
+
+
+# -----------------------------------------------------------------------------
+# STEP 2 + 3 · Merge degenerate TFs then process prior & estimate TFA
+# -----------------------------------------------------------------------------
+"""
+    loadPrior(data, priorFile; minTargets=3, mergeDegenerate=true, connector="_")
+
+Merge degenerate TFs, process the prior matrix, and return both the
+`PriorTFAData` struct and the `mergedTFsResult` map.
+
+# Arguments
+- `data`            : Populated `GeneExpressionData` from `loadData`
+- `priorFile`       : Path to TF × Gene prior matrix (TSV)
+- `minTargets`      : Minimum number of targets a TF must have to be retained (default 3)
+- `mergeDegenerate` : Whether to collapse TFs with identical target sets (default true)
+- `connector`       : String used to join meta-TF names (default "_")
+
+# Returns
+Tuple `(PriorTFAData, mergedTFsResult)`
+"""
+function loadPrior(
+    data::GeneExpressionData,
+    priorFile::String;
+    minTargets::Int      = 3,
+    mergeDegenerate::Bool = true,
+    connector::String    = "_"
+)::Tuple{PriorTFAData, mergedTFsResult}
+
+    mergedTFs = mergedTFsResult()
+    if mergeDegenerate
+        mergeDegenerateTFs(mergedTFs, priorFile; fileFormat = 2, connector = connector)
+    end
+
+    priorData = PriorTFAData()
+    processPriorFile!(priorData, data, priorFile;
+                      mergedTFsData = mergedTFs,
+                      minTargets    = minTargets)
+    return priorData, mergedTFs
+end
+
+
+# -----------------------------------------------------------------------------
+# STEP 3 (cont.) · Estimate TF activity
+# -----------------------------------------------------------------------------
+"""
+    estimateTFA(priorData, data; edgeSS=0, zscoreTargets=true, outputDir=".")
+
+Estimate TF activity (TFA) by solving `prior * TFA ≈ targetExpression`
+via least squares, with optional bootstrap subsampling of targets.
+
+# Arguments
+- `priorData`       : `PriorTFAData` from `loadPrior`
+- `data`            : `GeneExpressionData` from `loadData`
+- `edgeSS`          : Number of edge subsamples (0 = no subsampling)
+- `zscoreTargets`   : Whether to z-score target expression before solving (default true)
+- `outputDir`       : Directory for intermediate output files (default ".")
+
+# Returns
+TFA matrix as `Matrix{Float64}` (TFs × samples), also stored in `priorData.medTfas`
+"""
+function estimateTFA(
+    priorData::PriorTFAData,
+    data::GeneExpressionData;
+    edgeSS::Int          = 0,
+    zscoreTargets::Bool  = true,
+    outputDir::String    = "."
+)::Matrix{Float64}
+
+    calculateTFA!(priorData, data;
+                  edgeSS          = edgeSS,
+                  zscoreTargExp   = zscoreTargets,
+                  outputDir       = outputDir)
+    return priorData.medTfas
+end
+
+
+# -----------------------------------------------------------------------------
+# STEP 4 · Build a single GRN (one predictor mode)
+# -----------------------------------------------------------------------------
+"""
+    buildNetwork(data, priorData; kwargs...) → BuildGrn
+
+Run the full mLASSO-StARS pipeline for one predictor mode and return the
+ranked edge table.
+
+Internally runs:
+`preparePredictorMat!` → `preparePenaltyMatrix!` → `constructSubsamples` →
+`bstarsWarmStart` → `constructSubsamples` (full) → `bstartsEstimateInstability` →
+`chooseLambda!` → `rankEdges!` → `writeNetworkTable!`
+
+# Arguments
+- `data`                  : `GeneExpressionData`
+- `priorData`             : `PriorTFAData`
+- `tfaMode`               : true = TFA predictors, false = raw mRNA for all TFs
+- `priorFilePenalties`    : Prior file(s) used to build the penalty matrix
+- `lambdaBias`            : Penalty reduction factor for prior edges (default [0.5])
+- `totSS`                 : Total subsamples for fine instability estimation (default 80)
+- `bstarsTotSS`           : Subsamples for warm-start (default 5)
+- `subsampleFrac`         : Fraction of samples per subsample (default 0.63)
+- `minLambda`             : Lower bound of λ search range (default 0.01)
+- `maxLambda`             : Upper bound of λ search range (default 0.5)
+- `totLambdasBstars`      : λ grid points in warm-start pass (default 20)
+- `totLambdas`            : λ grid points in fine estimation pass (default 40)
+- `targetInstability`     : Instability threshold for λ selection (default 0.05)
+- `meanEdgesPerGene`      : Max edges retained per target gene (default 20)
+- `correlationWeight`     : Weight of partial correlation in edge scoring (default 1)
+- `instabilityLevel`      : "Network" (single λ) or "Gene" (per-gene λ)
+- `useMeanEdgesPerGeneMode`: Enforce per-gene edge cap (default true)
+- `zTarget`               : Z-score targets during regression (default true)
+- `outputDir`             : Output directory for edges.tsv and stability arrays
+
+# Returns
+`BuildGrn` with `networkStability`, `signedQuantile`, `networkMat`, etc.
+"""
+function buildNetwork(
+    data::GeneExpressionData,
+    priorData::PriorTFAData;
+    tfaMode::Bool                   = true,
+    priorFilePenalties::Vector{String} = String[],
+    lambdaBias::Vector{Float64}     = [0.5],
+    totSS::Int                      = 80,
+    bstarsTotSS::Int                = 5,
+    subsampleFrac::Float64          = 0.63,
+    minLambda::Float64              = 0.01,
+    maxLambda::Float64              = 0.5,
+    totLambdasBstars::Int           = 20,
+    totLambdas::Int                 = 40,
+    targetInstability::Float64      = 0.05,
+    meanEdgesPerGene::Int           = 20,
+    correlationWeight::Int          = 1,
+    instabilityLevel::String        = "Network",
+    useMeanEdgesPerGeneMode::Bool   = true,
+    zTarget::Bool                   = true,
+    outputDir::String               = "."
+)::BuildGrn
+
+    tfaOpt = tfaMode ? "" : "TFmRNA"
+
+    grnData = GrnData()
+    preparePredictorMat!(grnData, data, priorData, tfaOpt)
+    preparePenaltyMatrix!(data, grnData, priorFilePenalties, lambdaBias, tfaOpt)
+
+    # Warm-start pass (coarse λ range)
+    constructSubsamples(data, grnData; totSS = bstarsTotSS, subsampleFrac = subsampleFrac)
+    bstarsWarmStart(data, priorData, grnData;
+                    minLambda        = minLambda,
+                    maxLambda        = maxLambda,
+                    totLambdasBstars = totLambdasBstars,
+                    targetInstability = targetInstability,
+                    zTarget          = zTarget)
+
+    # Fine estimation pass
+    constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
+    bstartsEstimateInstability(grnData;
+                               totLambdas       = totLambdas,
+                               instabilityLevel = instabilityLevel,
+                               zTarget          = zTarget,
+                               outputDir        = outputDir)
+
+    buildGrn = BuildGrn()
+    chooseLambda!(grnData, buildGrn;
+                  instabilityLevel  = instabilityLevel,
+                  targetInstability = targetInstability)
+    rankEdges!(data, priorData, grnData, buildGrn;
+               useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
+               meanEdgesPerGene        = meanEdgesPerGene,
+               correlationWeight       = correlationWeight,
+               outputDir               = outputDir)
+    writeNetworkTable!(buildGrn; outputDir = outputDir)
+
+    return buildGrn
+end
+
+
+# -----------------------------------------------------------------------------
+# STEP 5 · Aggregate networks across predictor modes
+# -----------------------------------------------------------------------------
+"""
+    aggregateNetworks(networkFiles; method=:max, meanEdgesPerGene=20,
+                      useMeanEdgesPerGene=true, outputDir=".")
+
+Merge multiple per-mode edge tables (TFA + TFmRNA) into a single consensus
+network by aggregating stability scores for each (TF, Gene) pair.
+
+# Arguments
+- `networkFiles`         : Vector of paths to edges.tsv files to merge
+- `method`               : Aggregation rule — `:max`, `:mean`, or `:min` (default `:max`)
+- `meanEdgesPerGene`     : Edge cap per target gene in the combined network (default 20)
+- `useMeanEdgesPerGene`  : Apply per-gene edge cap (default true)
+- `outputDir`            : Directory for combined_max.tsv and combined_max_sp.tsv
+
+# Returns
+Combined edge `DataFrame` with columns [TF, Gene, signedQuantile, Stability, ...]
+"""
+function aggregateNetworks(
+    networkFiles::Vector{String};
+    method::Symbol               = :max,
+    meanEdgesPerGene::Int        = 20,
+    useMeanEdgesPerGene::Bool    = true,
+    outputDir::String            = "."
+)
+
+    combineOpt = string(method)
+    combineGRNs(networkFiles;
+                combineOpt              = combineOpt,
+                meanEdgesPerGene        = meanEdgesPerGene,
+                useMeanEdgesPerGeneMode = useMeanEdgesPerGene,
+                saveDir                 = outputDir,
+                saveName                = "")
+end
+
+
+# -----------------------------------------------------------------------------
+# STEP 6 · Recalculate TFA using the combined network as a refined prior
+# -----------------------------------------------------------------------------
+"""
+    refineTFA(combinedNetFile, data, mergedTFs; kwargs...) → Matrix{Float64}
+
+Use the aggregated consensus network as a new prior and re-estimate TF
+activity, yielding a data-driven TFA matrix that reflects the final GRN.
+
+# Arguments
+- `combinedNetFile` : Path to sparse combined network TSV (combined_max_sp.tsv)
+- `data`            : `GeneExpressionData`
+- `mergedTFs`       : `mergedTFsResult` from `loadPrior`
+- `tfaGeneFile`     : Optional gene list for TFA (default "")
+- `edgeSS`          : Edge subsampling replicates for TFA (default 0)
+- `minTargets`      : Minimum targets per TF (default 3)
+- `exprFile`        : Original expression file path (required by combineGRNS2)
+- `targFile`        : Target gene file path
+- `regFile`         : Regulator file path
+- `outputDir`       : Directory for refined TFA output (default ".")
+
+# Returns
+Refined TFA matrix as `Matrix{Float64}` (regulators × samples)
+"""
+function refineTFA(
+    combinedNetFile::String,
+    data::GeneExpressionData,
+    mergedTFs::mergedTFsResult;
+    tfaGeneFile::String  = "",
+    edgeSS::Int          = 0,
+    minTargets::Int      = 3,
+    exprFile::String     = "",
+    targFile::String     = "",
+    regFile::String      = "",
+    outputDir::String    = "."
+)
+
+    combineGRNS2(data, mergedTFs, tfaGeneFile, combinedNetFile,
+                 edgeSS, minTargets, exprFile, targFile, regFile;
+                 outputDir = outputDir)
+end
+
+
+# -----------------------------------------------------------------------------
+# STEP 7 · Evaluate a network against a gold standard
+# -----------------------------------------------------------------------------
+"""
+    evaluateNetwork(networkFile, goldStandard; metric=:AUPR) → NamedTuple
+
+Evaluate a ranked edge list against a gold-standard network.
+
+# Arguments
+- `networkFile`   : Path to edges TSV (TF, Gene, signedQuantile, ...)
+- `goldStandard`  : Path to gold-standard network TSV
+- `metric`        : Evaluation metric — `:AUPR`, `:AUROC`, or `:both` (default `:AUPR`)
+
+# Returns
+`NamedTuple` with fields depending on `metric`:
+`(aupr=..., auroc=..., precision=..., recall=...)`
+"""
+function evaluateNetwork(
+    networkFile::String,
+    goldStandard::String;
+    metric::Symbol = :AUPR
+)
+
+    # Delegates to Metrics submodule
+    computeMacroMetrics(networkFile, goldStandard; metric = metric)
+end
+
+
+# -----------------------------------------------------------------------------
+# CONVENIENCE · Full pipeline in one call
+# -----------------------------------------------------------------------------
+"""
+    inferGRN(exprFile, targFile, regFile, priorFile; outputDir="results", kwargs...)
+
+Run the complete InferelatorJL pipeline end-to-end:
+
+1. Load & filter expression data
+2. Merge degenerate TFs + process prior
+3. Estimate TFA
+4. Build TFA-mode network
+5. Build mRNA-mode network
+6. Aggregate both networks
+7. Recalculate TFA on combined network
+
+All keyword arguments are forwarded to the relevant sub-functions.
+
+# Returns
+`BuildGrn` from the TFA-mode network (combined results written to `outputDir`)
+"""
+function inferGRN(
+    exprFile::String,
+    targFile::String,
+    regFile::String,
+    priorFile::String;
+    outputDir::String               = "results",
+    tfaGeneFile::String             = "",
+    epsilon::Float64                = 0.01,
+    minTargets::Int                 = 3,
+    edgeSS::Int                     = 0,
+    zTarget::Bool                   = true,
+    priorFilePenalties::Vector{String} = String[],
+    lambdaBias::Vector{Float64}     = [0.5],
+    totSS::Int                      = 80,
+    bstarsTotSS::Int                = 5,
+    subsampleFrac::Float64          = 0.63,
+    minLambda::Float64              = 0.01,
+    maxLambda::Float64              = 0.5,
+    totLambdasBstars::Int           = 20,
+    totLambdas::Int                 = 40,
+    targetInstability::Float64      = 0.05,
+    meanEdgesPerGene::Int           = 20,
+    correlationWeight::Int          = 1,
+    instabilityLevel::String        = "Network",
+    useMeanEdgesPerGeneMode::Bool   = true,
+    combineMethod::Symbol           = :max
+)::BuildGrn
+
+    mkpath(outputDir)
+    tfaDir   = joinpath(outputDir, "TFA")
+    mRNADir  = joinpath(outputDir, "TFmRNA")
+    combDir  = joinpath(outputDir, "Combined")
+    mkpath(tfaDir);  mkpath(mRNADir);  mkpath(combDir)
+
+    # Shared kwargs for buildNetwork
+    netKwargs = (
+        priorFilePenalties      = isempty(priorFilePenalties) ? [priorFile] : priorFilePenalties,
+        lambdaBias              = lambdaBias,
+        totSS                   = totSS,
+        bstarsTotSS             = bstarsTotSS,
+        subsampleFrac           = subsampleFrac,
+        minLambda               = minLambda,
+        maxLambda               = maxLambda,
+        totLambdasBstars        = totLambdasBstars,
+        totLambdas              = totLambdas,
+        targetInstability       = targetInstability,
+        meanEdgesPerGene        = meanEdgesPerGene,
+        correlationWeight       = correlationWeight,
+        instabilityLevel        = instabilityLevel,
+        useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
+        zTarget                 = zTarget,
+    )
+
+    # Steps 1–3
+    data                = loadData(exprFile, targFile, regFile;
+                                   tfaGeneFile = tfaGeneFile, epsilon = epsilon)
+    priorData, mergedTFs = loadPrior(data, priorFile; minTargets = minTargets)
+    estimateTFA(priorData, data; edgeSS = edgeSS, zscoreTargets = zTarget,
+                outputDir = outputDir)
+
+    # Step 4 — TFA mode
+    tfaGrn  = buildNetwork(data, priorData; tfaMode = true,
+                            netKwargs..., outputDir = tfaDir)
+
+    # Step 4 — mRNA mode
+    mrnaGrn = buildNetwork(data, priorData; tfaMode = false,
+                            netKwargs..., outputDir = mRNADir)
+
+    # Step 5 — aggregate
+    aggregateNetworks(
+        [joinpath(tfaDir,  "edges.tsv"),
+         joinpath(mRNADir, "edges.tsv")];
+        method              = combineMethod,
+        meanEdgesPerGene    = meanEdgesPerGene,
+        useMeanEdgesPerGene = useMeanEdgesPerGeneMode,
+        outputDir           = combDir
+    )
+
+    # Step 6 — refine TFA
+    combinedSparse = joinpath(combDir, "combined_" * string(combineMethod) * "_sp.tsv")
+    refineTFA(combinedSparse, data, mergedTFs;
+              tfaGeneFile = tfaGeneFile,
+              edgeSS      = edgeSS,
+              minTargets  = minTargets,
+              exprFile    = exprFile,
+              targFile    = targFile,
+              regFile     = regFile,
+              outputDir   = combDir)
+
+    return tfaGrn
+end
