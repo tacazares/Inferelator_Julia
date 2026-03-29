@@ -9,6 +9,7 @@ include("01_Prior/mergeDegenerateTFs.jl")
 include("00_Data/priorTFA.jl")
 include("Utils/networkIO.jl")
 include("02_GRN/GRN.jl")
+include("API.jl")
 
 # include("Utils/partialCorrelation.jl")
 
@@ -89,6 +90,16 @@ export
     combineGRNS2,
 
     #I/O
-    saveData, writeNetworkTable!
+    saveData, writeNetworkTable!,
+
+    # Public API (src/API.jl)
+    loadData,
+    loadPrior,
+    estimateTFA,
+    buildNetwork,
+    aggregateNetworks,
+    refineTFA,
+    evaluateNetwork,
+    inferGRN
 
 end

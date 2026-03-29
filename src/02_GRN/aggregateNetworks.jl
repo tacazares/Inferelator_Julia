@@ -72,7 +72,7 @@ end
 # ────────────────────────────────────────────────────────────────
 # Main function
 # ────────────────────────────────────────────────────────────────
-function combineGRNs(nets2combine::Vector{String}; combineOpt::Union{String,Symbol}, meanEdgesPerGene::Int,  useMeanEdgesPerGeneMode::Bool, 
+function aggregateNetworks(nets2combine::Vector{String}; combineOpt::Union{String,Symbol}, meanEdgesPerGene::Int,  useMeanEdgesPerGeneMode::Bool, 
                     saveDir::Union{String,Nothing}=nothing, saveName::String="")
 
     """
@@ -286,7 +286,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
 
     @printf("Combining %d files with combination option: %s\n", length(fileList), combineOpt)
 
-    selectedDf = combineGRNs(fileList; combineOpt=combineOpt, meanEdgesPerGene=meanEdgesPerGene, saveDir=saveDir, saveName=saveName)
+    selectedDf = aggregateNetworks(fileList; combineOpt=combineOpt, meanEdgesPerGene=meanEdgesPerGene, saveDir=saveDir, saveName=saveName)
 
     # Optionally, print summary
     @printf("Final network has %d edges spanning %d unique genes.\n", nrow(selectedDf), length(unique(selectedDf.Gene)))
