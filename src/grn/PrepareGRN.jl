@@ -58,7 +58,7 @@ Dependencies:
 #     end
 # end
 
-function preparePredictorMat!(grnData::GrnData, expressionData::GeneExpressionData, priorData::PriorTFAData, tfaOpt::String)
+function preparePredictorMat!(grnData::GrnData, expressionData::GeneExpressionData, priorData::PriorTFAData; tfaOpt::String = "")
     if tfaOpt != ""
         println("noTfa option")
         pRegs = priorData.pRegsNoTfa;
@@ -121,7 +121,10 @@ function preparePredictorMat!(grnData::GrnData, expressionData::GeneExpressionDa
 end
 
 
-function preparePenaltyMatrix!(expressionData::GeneExpressionData, grnData::GrnData, priorFilePenalties::Vector{String}, lambdaBias::Vector{Float64}, tfaOpt::String)
+function preparePenaltyMatrix!(expressionData::GeneExpressionData, grnData::GrnData;
+                               priorFilePenalties::Vector{String} = String[],
+                               lambdaBias::Vector{Float64}        = [0.5],
+                               tfaOpt::String                     = "")
     #1. Update Penalty Matrix
     # Create a dictionary to store the minimum lambda for each interaction
     minLambdaDict = Dict{Tuple{String,String}, Float64}()
