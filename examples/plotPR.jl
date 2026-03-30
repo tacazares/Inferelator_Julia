@@ -1,0 +1,221 @@
+# =============================================================================
+#  plotPR.jl — Evaluate GRN predictions against gold standards and plot PR curves
+#
+#  What:
+#    Evaluates one or more inferred GRNs against gold-standard interaction sets
+#    by computing precision-recall (PR) and ROC metrics, then generating
+#    publication-quality PR curve plots. Supports multiple networks and
+#    multiple gold standards in a single run. Optionally generates per-TF
+#    PR curves and AUPR bar plots.
+#
+#  Required inputs:
+#    outNetFiles    — inferred GRN file(s) as legend label → file path dict
+#    gsParam        — gold-standard file(s) as name → file path dict
+#    prTargGeneFile — target gene list used to restrict evaluation universe
+#                     (set to "" to use all genes in the network)
+#    gsRegsFile     — regulator list to restrict evaluation to shared TFs
+#                     (set to "" to use all regulators)
+#
+#  Expected outputs (written relative to each network file's directory):
+#    PR_noPotRegs/<gsName>/          — PR data files (if gsRegsFile = "")
+#    PR_withPotRegs/<gsName>/        — PR data files (if gsRegsFile is set)
+#    dirOutPlot/<figBaseName>_*.png  — PR curve plots and optional AUPR bar plots
+#
+#  Usage:
+#    julia examples/plotPR.jl
+#    or configure the USER CONFIG section and run step-by-step in the REPL
+#
+#  Installation:
+#    pkg> dev /path/to/InferelatorJL      # local development
+#    pkg> add "https://github.com/org/InferelatorJL.jl"   # published release
+#    Tip: load Revise before this file to pick up source edits without restarting:
+#         using Revise; using InferelatorJL
+# =============================================================================
+
+using InferelatorJL
+import InferelatorJL: computePR, plotPRCurves, plotAUPR, loadPRData
+
+using OrderedCollections
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  USER CONFIG — edit this section
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Output directory for plots
+dirOutPlot = "/data/miraldiNB/Michael/projects/goldStandard/Human/fdr0p01_vs_IDR"
+
+# Base name for saved figures (set to "" to use gold-standard name only)
+figBaseName = "ALL_5KB_sharedTF_Target"
+
+# Network files to compare: legend label => file path
+outNetFiles = OrderedDict(
+    "FDR0p01" => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_FDR0p01/20260325/GS_5KB_TSS/sumRegion_reducePool/All/context_mean/global_max/GS_All_peakScore10_top50_sharedTF_Gene_withIDR.tsv",
+    "IDR"     => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260321/GS_5KB_TSS/sumRegion_reducePool/All/context_mean/global_max/GS_All_peakScore10_top50_sharedTF_Gene_withFDR0p01.tsv"
+)
+
+# Gold-standard files: name => file path
+gsParam = OrderedDict(
+    "KO_GS" => "/data/miraldiNB/Michael/projects/GRN/hCD4T_Katko/dataBank/GS/KO_GS_50_Michael_autosomal.tsv",
+)
+
+# Evaluation inputs
+prTargGeneFile = "/data/miraldiNB/Michael/projects/GRN/hCD4T_Katko/dataBank/potTargRegs/Targs/all_targs_autosomal.txt"
+gsRegsFile     = "/data/miraldiNB/Katko/Projects/Barski_CD4_Multiome/Outs/Prior/SubsetPriors/all_TFs.txt"
+rankColTrn     = 3       # column in GRN file corresponding to interaction ranks/confidences
+breakTies      = true
+auprLimit      = 0.1
+
+# Plot parameters
+lineTypes    = []   # e.g. ["-", "--", "-."] — one per dataset; [] uses defaults
+lineWidths   = []   # per dataset; [] uses defaults
+lineColors   = []   # per dataset; [] uses defaults
+xLimitRecall = 0.1
+yStepSize    = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]  # one per gold standard
+yScaleType   = "linear"
+yZoomPR      = [[0.4, 0.9], [0.2, 0.9], [0.3, 0.9], [], [], [], [], [], [], [], [0.7, 0.9], [], [0.7, 0.9]]  # one per gold standard, or []
+heightRatios = [0.5, 3.0]  # height ratios for broken y-axis panels
+isInside     = false   # legend inside the plot
+plotAUPRflag = false   # set to true to also generate AUPR bar plots
+combinePlot  = true    # generate a combined PR curve per network/GS pair
+doPerTF      = true    # compute per-TF PR metrics
+tfList       = []      # list of TF names for per-TF curves; [] skips Section 3
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  EXECUTION — no edits needed below this line
+# ══════════════════════════════════════════════════════════════════════════════
+
+mkpath(dirOutPlot)
+
+# --- Helper: resolve per-GS plot parameters ---
+function getPlotParams(i, gsName; figBaseName, yZoomPR, yStepSize)
+    saveNamePR       = isempty(figBaseName) ? "$(gsName)" : "$(figBaseName)_$(gsName)"
+    currentYzoomPR   = (length(yZoomPR) >= i && !isempty(yZoomPR[i])) ? yZoomPR[i] : Float64[]
+    currentYstepSize = (length(yStepSize) >= i && !isempty(yStepSize[i])) ? yStepSize[i] : nothing
+    return saveNamePR, currentYzoomPR, currentYstepSize
+end
+
+# ── 1. Calculate PR/ROC metrics ───────────────────────────────────────────────
+@info "---- 1. Calculating Performance Metrics for the Networks -----"
+prFilesByGS = OrderedDict{String, OrderedDict{String, Any}}()
+
+for (legendLabel, outNetFile) in outNetFiles
+    @info "Processing network" network=legendLabel file=outNetFile
+    filepath = dirname(outNetFile)
+
+    for (gsName, gsFile) in gsParam
+        dirOut = isempty(gsRegsFile) ? joinpath(filepath, "PR_noPotRegs", gsName) :
+                                       joinpath(filepath, "PR_withPotRegs", gsName)
+        mkpath(dirOut)
+        @info "Using GS" gs=gsName saveDir=dirOut
+
+        res = computePR(gsFile, outNetFile;
+                        gsRegsFile       = gsRegsFile,
+                        targGeneFile     = prTargGeneFile,
+                        rankColTrn       = rankColTrn,
+                        breakTies        = breakTies,
+                        partialAUPRlimit = auprLimit,
+                        doPerTF          = doPerTF,
+                        saveDir          = dirOut)
+
+        if !haskey(prFilesByGS, gsName)
+            prFilesByGS[gsName] = OrderedDict{String, Any}()
+        end
+        prFilesByGS[gsName][legendLabel] = haskey(res, :savedFile) ? res[:savedFile] : res
+    end
+end
+
+# ── 2. Global PR curves ───────────────────────────────────────────────────────
+@info "---- 2. Generating Global PR Curves ----"
+if combinePlot
+    for (i, (gsName, listFilePR)) in enumerate(prFilesByGS)
+        @info "Plotting PR curves" gs=gsName
+
+        saveNamePR, currentYzoomPR, currentYstepSize = getPlotParams(i, gsName;
+                                                                      figBaseName = figBaseName,
+                                                                      yZoomPR     = yZoomPR,
+                                                                      yStepSize   = yStepSize)
+
+        plotPRCurves(listFilePR, dirOutPlot, saveNamePR;
+                     xLimitRecall = xLimitRecall,
+                     yZoomPR      = currentYzoomPR,
+                     yStepSize    = currentYstepSize,
+                     yScale       = yScaleType,
+                     isInside     = isInside,
+                     lineColors   = lineColors,
+                     lineTypes    = lineTypes,
+                     lineWidths   = lineWidths,
+                     heightRatios = heightRatios,
+                     mode         = :global)
+
+        if plotAUPRflag
+            singleGS     = OrderedDict(gsName => listFilePR)
+            saveNameAUPR = isempty(figBaseName) ? "$(gsName)" : "$(figBaseName)_$(gsName)"
+
+            for (figSize, saveLegend) in [((5, 4), true), ((1.5, 1.5), false)]
+                plotAUPR(singleGS, dirOutPlot;
+                         saveName       = saveNameAUPR,
+                         metricType     = "partial",
+                         figSize        = figSize,
+                         axisTitleSize  = 9,
+                         tickLabelSize  = 7,
+                         legendFontSize = 9,
+                         tickRotation   = 45,
+                         plotType       = "bar",
+                         saveLegend     = saveLegend)
+            end
+        end
+        @info "Plots completed" gs=gsName
+    end
+end
+
+# ── 3. Per-TF PR curves ───────────────────────────────────────────────────────
+if !isempty(tfList)
+    @info "----- 3. Generating Per-TF PR Curves -----"
+    for (i, (gsName, resultsDict)) in enumerate(prFilesByGS)
+        @info "Plotting per-TF PR curves" gs=gsName
+
+        saveNamePR, currentYzoomPR, currentYstepSize = getPlotParams(i, gsName;
+                                                                      figBaseName = figBaseName,
+                                                                      yZoomPR     = yZoomPR,
+                                                                      yStepSize   = yStepSize)
+        saveNamePR = "perTF_$(saveNamePR)"
+        tfListPR   = OrderedDict()
+
+        resCache = Dict{String, Any}()
+        for (runName, source) in resultsDict
+            resCache[runName] = loadPRData(source; mode = :perTF)
+        end
+
+        for (runName, res) in resCache
+            res === nothing && continue
+            tfIndex = Dict(tf => j for (j, tf) in enumerate(res[:gsRegs]))
+            for tf in tfList
+                idx = get(tfIndex, tf, nothing)
+                idx === nothing && continue
+
+                label =
+                    length(tfList) == 1 && length(resultsDict) > 1 ? runName :
+                    length(resultsDict) == 1 && length(tfList) > 1 ? tf :
+                    "$runName - $tf"
+
+                tfListPR[label] = Dict(
+                    :precisions => res[:precisions][idx],
+                    :recalls    => res[:recalls][idx],
+                    :randPR     => res[:randPR][idx]
+                )
+            end
+        end
+
+        plotPRCurves(tfListPR, dirOutPlot, saveNamePR;
+                     xLimitRecall = xLimitRecall,
+                     yZoomPR      = currentYzoomPR,
+                     yStepSize    = currentYstepSize,
+                     yScale       = yScaleType,
+                     isInside     = isInside,
+                     lineColors   = lineColors,
+                     lineTypes    = lineTypes,
+                     lineWidths   = lineWidths)
+    end
+end
+
+@info "Completed — plots generated for all gold standards"

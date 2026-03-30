@@ -1,0 +1,184 @@
+# =============================================================================
+#  run_pipeline_dev.jl — Batch GRN inference via module-qualified internal calls
+#
+#  What:
+#    Identical pipeline to run_pipeline.jl but calls internal functions directly
+#    using the InferelatorJL. module prefix. Use this when you need finer control
+#    over individual pipeline steps while still running in batch/function mode.
+#    All internal functions remain accessible via module-qualified calls even
+#    though they are not exported from the package.
+#
+#  Required inputs:
+#    geneExprFile        — gene expression matrix (.txt tab-delimited or .arrow)
+#    targFile            — target gene list (.txt, one gene per line)
+#    regFile             — potential regulator (TF) list (.txt, one TF per line)
+#    priorFile           — prior network matrix (.tsv, sparse TF × gene)
+#    priorFilePenalties  — prior(s) used to set LASSO penalties (same or different)
+#    outputDir           — root directory for all outputs
+#
+#  Expected outputs (written under outputDir/<networkBaseName>/):
+#    TFA/edges.tsv           — GRN inferred with TFA predictors
+#    TFmRNA/edges.tsv        — GRN inferred with TF mRNA predictors
+#    Combined/combined_*.tsv — consensus network (max/mean/min aggregation)
+#    Combined/TFA/           — refined TFA network re-estimated from consensus prior
+#
+#  Usage:
+#    julia examples/run_pipeline_dev.jl
+#    or call runInferelator() from another script after: using InferelatorJL
+#
+#  Compare with:
+#    interactive_pipeline_dev.jl  — same internal calls run interactively
+#    run_pipeline.jl              — same function using public API
+#
+#  Installation:
+#    pkg> dev /path/to/InferelatorJL      # local development
+#    pkg> add "https://github.com/org/InferelatorJL.jl"   # published release
+#    Tip: load Revise before this file to pick up source edits without restarting:
+#         using Revise; using InferelatorJL
+# =============================================================================
+
+using InferelatorJL
+
+# =============================================================================
+# Pipeline function
+# =============================================================================
+
+function runInferelator(;
+    geneExprFile::String,
+    targFile::String,
+    regFile::String,
+    priorFile::String,
+    priorFilePenalties::Vector{String},
+    tfaGeneFile::String             = "",
+    outputDir::String,
+    tfaOptions::Vector{String}      = ["", "TFmRNA"],   # "" → TFA, "TFmRNA" → mRNA
+    totSS::Int                      = 80,
+    bstarsTotSS::Int                = 5,
+    subsampleFrac::Float64          = 0.68,
+    minLambda::Float64              = 0.01,
+    maxLambda::Float64              = 0.5,
+    totLambdasBstars::Int           = 20,
+    totLambdas::Int                 = 40,
+    targetInstability::Float64      = 0.05,
+    meanEdgesPerGene::Int           = 20,
+    correlationWeight::Int          = 1,
+    minTargets::Int                 = 3,
+    edgeSS::Int                     = 0,
+    lambdaBias::Vector{Float64}     = [0.5],
+    instabilityLevel::String        = "Network",  # "Network" or "Gene"
+    useMeanEdgesPerGeneMode::Bool   = true,
+    combineOpt::String              = "max",       # "max", "mean", or "min"
+    zScoreTFA::Bool                 = true,
+    zScoreLASSO::Bool               = true
+)
+    # Build output directory name (encodes key run parameters)
+    subsamplePct    = subsampleFrac * 100
+    subsampleStr    = isinteger(subsamplePct) ? string(Int(subsamplePct)) : replace(string(subsamplePct), "." => "p")
+    lambdaStr       = join(replace.(string.(lambdaBias), "." => "p"), "_")
+    networkBaseName = lowercase(instabilityLevel) * "Lambda" * lambdaStr * "_" * string(totSS) * "totSS_" *
+                      string(meanEdgesPerGene) * "tfsPerGene_" * "subsamplePCT" * subsampleStr
+    dirOut = joinpath(outputDir, networkBaseName)
+    mkpath(dirOut)
+
+    @info "Starting pipeline" outputDir=dirOut geneExprFile priorFile lambdaBias subsampleFrac
+
+    # Step 1 — Load and filter expression data
+    data = GeneExpressionData()
+    InferelatorJL.loadExpressionData!(data, geneExprFile)
+    InferelatorJL.loadAndFilterTargetGenes!(data, targFile; epsilon = 0.01)
+    InferelatorJL.loadPotentialRegulators!(data, regFile)
+    InferelatorJL.processTFAGenes!(data, tfaGeneFile; outputDir = dirOut)
+
+    # Step 2 — Merge degenerate TFs
+    mergedTFsData = mergedTFsResult()
+    InferelatorJL.mergeDegenerateTFs(mergedTFsData, priorFile; fileFormat = 2)
+
+    # Step 3 — Process prior and estimate TFA
+    tfaData = PriorTFAData()
+    InferelatorJL.processPriorFile!(tfaData, data, priorFile;
+                                     mergedTFsData = mergedTFsData,
+                                     minTargets    = minTargets)
+    InferelatorJL.calculateTFA!(tfaData, data;
+                                 edgeSS    = edgeSS,
+                                 zTarget   = zScoreTFA,
+                                 outputDir = dirOut)
+
+    # Step 4 — Build GRN for each predictor mode
+    for tfaOpt in tfaOptions
+        instabilitiesDir = tfaOpt == "" ? joinpath(dirOut, "TFA") : joinpath(dirOut, "TFmRNA")
+        mkpath(instabilitiesDir)
+
+        @info "Building network" tfaOpt=(isempty(tfaOpt) ? "TFA" : tfaOpt)
+
+        grnData = GrnData()
+        InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = tfaOpt)
+        InferelatorJL.preparePenaltyMatrix!(data, grnData;
+                                             priorFilePenalties = priorFilePenalties,
+                                             lambdaBias         = lambdaBias,
+                                             tfaOpt             = tfaOpt)
+        InferelatorJL.constructSubsamples(data, grnData; totSS = bstarsTotSS, subsampleFrac = subsampleFrac)
+        InferelatorJL.bstarsWarmStart(data, tfaData, grnData;
+                                       minLambda         = minLambda,
+                                       maxLambda         = maxLambda,
+                                       totLambdasBstars  = totLambdasBstars,
+                                       targetInstability = targetInstability,
+                                       zTarget           = zScoreLASSO)
+        InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
+        InferelatorJL.bstartsEstimateInstability(grnData;
+                                                  totLambdas       = totLambdas,
+                                                  instabilityLevel = instabilityLevel,
+                                                  zTarget          = zScoreLASSO,
+                                                  outputDir        = instabilitiesDir)
+
+        buildGrn = BuildGrn()
+        InferelatorJL.chooseLambda!(grnData, buildGrn;
+                                     instabilityLevel  = instabilityLevel,
+                                     targetInstability = targetInstability)
+        InferelatorJL.rankEdges!(data, tfaData, grnData, buildGrn;
+                                  useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
+                                  meanEdgesPerGene        = meanEdgesPerGene,
+                                  correlationWeight       = correlationWeight,
+                                  outputDir               = instabilitiesDir)
+        writeNetworkTable!(buildGrn; outputDir = instabilitiesDir)
+    end
+
+    # Step 5 — Aggregate TFA + mRNA networks into a consensus network
+    combinedNetDir = joinpath(dirOut, "Combined")
+    nets2combine   = [
+        joinpath(dirOut, "TFA",    "edges.tsv"),
+        joinpath(dirOut, "TFmRNA", "edges.tsv")
+    ]
+    InferelatorJL.aggregateNetworks(nets2combine;
+                                    method              = Symbol(combineOpt),
+                                    meanEdgesPerGene    = meanEdgesPerGene,
+                                    useMeanEdgesPerGene = useMeanEdgesPerGeneMode,
+                                    outputDir           = combinedNetDir)
+
+    # Step 6 — Re-estimate TFA using the consensus network as a refined prior
+    netsCombinedSparse = joinpath(combinedNetDir, "combined_" * combineOpt * "_sp.tsv")
+    InferelatorJL.refineTFA(data, mergedTFsData;
+                            priorFile    = netsCombinedSparse,
+                            tfaGeneFile  = tfaGeneFile,
+                            edgeSS       = edgeSS,
+                            minTargets   = minTargets,
+                            zTarget      = zScoreTFA,
+                            geneExprFile = geneExprFile,
+                            targFile     = targFile,
+                            regFile      = regFile,
+                            outputDir    = combinedNetDir)
+
+    @info "Pipeline complete" outputDir=dirOut
+end
+
+# =============================================================================
+# Run — replace paths with your own data
+# =============================================================================
+
+runInferelator(
+    geneExprFile       = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/pseudobulk/pseudobulk_scrna/CellType/Age/Factor1/min0.25M/counts_Tfh10_AgeCellType_pseudobulk_scrna_vst_batch_NoState.txt",
+    targFile           = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/GRN_NoState/inputs/target_genes/gene_targ_Tfh10_SigPct5Log2FC0p58FDR5.txt",
+    regFile            = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/GRN_NoState/inputs/pot_regs/TF_Tfh10_SigPct5Log2FC0p58FDR5_final.txt",
+    priorFile          = "/data/miraldiNB/Michael/Scripts/GRN/Inferelator_JL/Tfh10_Example/inputs/priors/ATAC/ATAC_Tfh10.tsv",
+    priorFilePenalties = ["/data/miraldiNB/Michael/Scripts/GRN/Inferelator_JL/Tfh10_Example/inputs/priors/ATAC/ATAC_Tfh10.tsv"],
+    outputDir          = "/data/miraldiNB/Michael/projects/GRN/mCD4T_Wayman/Inferelator/test"
+)

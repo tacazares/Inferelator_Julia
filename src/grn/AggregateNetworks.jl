@@ -6,7 +6,7 @@ This module provides functionality for building and combining Gene Regulatory Ne
 The GRN files are assumed to have the following columns:
                         TF, Gene, signedQuantile, Stability, Correlation, strokeVals, strokeWidth, inPrior
 Main function:
-- `combineGRNs`: combine multiple GRN files with options for mean/max aggregation, 
+- `combineGRNs` (internal): combine multiple GRN files with options for mean/max aggregation,
   controlling edges per gene, and saving the combined network.
 
 Dependencies:
@@ -72,19 +72,26 @@ end
 # ────────────────────────────────────────────────────────────────
 # Main function
 # ────────────────────────────────────────────────────────────────
-function aggregateNetworks(nets2combine::Vector{String}; combineOpt::Union{String,Symbol}, meanEdgesPerGene::Int,  useMeanEdgesPerGeneMode::Bool, 
-                    saveDir::Union{String,Nothing}=nothing, saveName::String="")
+function aggregateNetworks(nets2combine::Vector{String};
+                    method::Union{String,Symbol}      = :max,
+                    meanEdgesPerGene::Int             = 20,
+                    useMeanEdgesPerGene::Bool         = true,
+                    outputDir::Union{String,Nothing}  = nothing,
+                    saveName::String                  = "")
 
     """
     # Arguments
     - `nets2combine::Vector{String}`: A vector of GRN file names to combine.
-    - `combineOpt::Union{String,Symbol}`: Specifies the combination strategy (e.g., "max", "meanQuantile").
-    - `meanEdgesPerGene::Int`: The mean number of edges per gene.
-    - `saveDir::Union{String,Nothing}`: Optional. Directory to save results. Defaults to `nothing` (do not save).
-    - `saveName::String`: Optional. Filename for saving combined GRN. Defaults to `""`.
-        useMeanEdgesPerGene = false # This option controls whether edge selection is done per-group or globally. If `true`, selects the top `meanEdgesPerGene` edges **per target gene**. 
-                                # If `false`, selects a flat total number of edges equal to `length(unique(targs)) * meanEdgesPerGene`.
+    - `method::Union{String,Symbol}`: Combination strategy — :max, :min, :mean, :meanQuantile, :maxQuantile.
+    - `meanEdgesPerGene::Int`: Mean number of edges per target gene.
+    - `outputDir::Union{String,Nothing}`: Directory to save results. Defaults to `nothing`.
+    - `saveName::String`: Optional filename prefix for saved files. Defaults to `""`.
+        useMeanEdgesPerGene: If `true`, selects `meanEdgesPerGene * uniqueGenes` edges globally.
+                             If `false`, selects top `meanEdgesPerGene` per target gene.
     """
+    combineOpt = string(method)         # normalise Symbol/String → String for comparisons
+    useMeanEdgesPerGeneMode = useMeanEdgesPerGene
+    saveDir = outputDir
     allDfs = DataFrame[]
     
     # ──── 1. Read each file and then combine; create a rank column if not present ───────────────────────────
@@ -286,7 +293,7 @@ if abspath(PROGRAM_FILE) == @__FILE__
 
     @printf("Combining %d files with combination option: %s\n", length(fileList), combineOpt)
 
-    selectedDf = aggregateNetworks(fileList; combineOpt=combineOpt, meanEdgesPerGene=meanEdgesPerGene, saveDir=saveDir, saveName=saveName)
+    selectedDf = aggregateNetworks(fileList; method=combineOpt, meanEdgesPerGene=meanEdgesPerGene, outputDir=saveDir, saveName=saveName)
 
     # Optionally, print summary
     @printf("Final network has %d edges spanning %d unique genes.\n", nrow(selectedDf), length(unique(selectedDf.Gene)))

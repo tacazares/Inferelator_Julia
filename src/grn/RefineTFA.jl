@@ -24,11 +24,16 @@ Dependencies:
     # Export only the function users need
     # export combineGRNS2
 
-function refineTFA(data::GeneExpressionData, mergedTFsData::mergedTFsResult, tfaGeneFile::Union{String, Nothing}, priorFile, edgeSS, minTargets,  
-                        geneExprFile::Union{String, Nothing}=nothing, 
-                        targetGeneFile::Union{String, Nothing}=nothing, 
-                        potRegFile::Union{String, Nothing}=nothing;
-                        outputDir::Union{String, Nothing}=nothing)
+function refineTFA(data::GeneExpressionData, mergedTFsData::mergedTFsResult;
+                   priorFile::String                  = "",
+                   tfaGeneFile::String                = "",
+                   edgeSS::Int                        = 0,
+                   minTargets::Int                    = 3,
+                   zTarget::Bool                      = true,
+                   geneExprFile::String               = "",
+                   targFile::String                   = "",
+                   regFile::String                    = "",
+                   outputDir::Union{String, Nothing}  = nothing)
     if !isnothing(outputDir)
         mkpath(outputDir)
     end
@@ -50,19 +55,19 @@ function refineTFA(data::GeneExpressionData, mergedTFsData::mergedTFsResult, tfa
     
         requiredFiles = [
             ("Gene Expression File", geneExprFile),
-            ("Target Gene File", targetGeneFile),
-            ("Potential Regulators File", potRegFile),
+            ("Target Gene File",     targFile),
+            ("Potential Regulators File", regFile),
         ]
-    
-        missingFiles = [name for (name, path) in requiredFiles if path === nothing || !isfile(path)]
+
+        missingFiles = [name for (name, path) in requiredFiles if isempty(path) || !isfile(path)]
         if !isempty(missingFiles)
             error("Cannot generate data. Missing input files: ", missingFiles)
         end
-    
+
         data = GeneExpressionData()
         loadExpressionData!(data, geneExprFile)
-        loadAndFilterTargetGenes!(data, targetGeneFile; epsilon=0.01)
-        loadPotentialRegulators!(data, potRegFile)
+        loadAndFilterTargetGenes!(data, targFile; epsilon=0.01)
+        loadPotentialRegulators!(data, regFile)
         processTFAGenes!(data, tfaGeneFile; outputDir = outputDir)
     end
 
@@ -70,7 +75,7 @@ function refineTFA(data::GeneExpressionData, mergedTFsData::mergedTFsResult, tfa
     # 2. Integrate prior information for TFA estimation
     tfaData = PriorTFAData()
     processPriorFile!(tfaData, data, priorFile; mergedTFsData, minTargets = minTargets);
-    calculateTFA!(tfaData, data; edgeSS = edgeSS, outputDir = outputDir); 
+    calculateTFA!(tfaData, data; edgeSS = edgeSS, zTarget = zTarget, outputDir = outputDir); 
 
     # Save TFA as a text file# Save median TFA if outputDir is specified
     if !isnothing(outputDir)

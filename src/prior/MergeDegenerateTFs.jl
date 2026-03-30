@@ -1,16 +1,9 @@
-module MergeDegenerate
-
     using CSV
     using DataFrames
     using Printf
     using FileIO
     using Base.Iterators: partition
     using Base.Threads
-
-    # Import functions from priorUtils
-    # include("../julia_fxns/priorUtils.jl")
-    using ..DataUtils
-    export mergedTFsResult, mergeDegenerateTFs, groupRedundantTFs, countOverlap, readNetwork
 
     """
         This script merges transcription factors (TFs) with identical target sets and interaction weights
@@ -43,14 +36,7 @@ module MergeDegenerate
         - `mergedTfs::Matrix{String}` — A two-column matrix where each row contains a meta-TF name and a comma-separated list of its constituent TFs.
     """
 
-    mutable struct  mergedTFsResult
-        mergedPrior::Union{DataFrame, Nothing}
-        mergedTFMap::Union{Matrix{String}, Nothing}  # 2-column matrix of strings or nothing
-        
-        function mergedTFsResult()
-            return new(nothing, nothing)
-        end
-    end
+    # Struct defined in src/Types.jl
 
 
     function countOverlap(s1::AbstractSet, s2::AbstractSet)
@@ -78,7 +64,7 @@ module MergeDegenerate
 
         # Arguments
         - `networkFile::String`: Path to the network file.
-        - `fileFormat::Int`: 
+        - `fileFormat::Int`:
             - `1` = long format (TF, Target, Weight)
             - `2` = wide format (Targets × TFs matrix)
 
@@ -162,7 +148,7 @@ module MergeDegenerate
 
         # Step A: Determine TF overlaps
         tfNames = sort(collect(keys(tfTargDic)))
-        tfMergers = Dict{String, Vector{String}}()  
+        tfMergers = Dict{String, Vector{String}}()
         overlaps = Dict{Tuple{String, String}, Int}()
         tfTargNums = Dict{String, Int}()
 
@@ -183,39 +169,38 @@ module MergeDegenerate
                 tid = threadid()
                 localOverlaps = localOverlapsArray[tid]
                 localMergers = localTFMergersArray[tid]
-        
+
                 tf1 = tfNames[i]
                 tf1targets = tfTargDic[tf1]
                 for j in (i+1):length(tfNames)
                     tf2 = tfNames[j]
                     tf2targets = tfTargDic[tf2]
                     overlapSize = countOverlap(tf1targets, tf2targets)
-                    
+
                     # Save both orderings if needed.
                     localOverlaps[(tf1, tf2)] = overlapSize
                     localOverlaps[(tf2, tf1)] = overlapSize
-                    
+
                     # If the overlap equals each TF's target count then they fully overlap.
-                    #  if tfTargNums[tf1] == overlapSize && tfTargNums[tf2] == overlapSize
                     if tfTargNums[tf1] == overlapSize && tfTargNums[tf2] == overlapSize
                         # Update local mergers for tf1.
                         localMergers[tf1] = get!(localMergers, tf1, Set([tf1]))
                         push!(localMergers[tf1], tf2)
-                        
+
                         # Update local mergers for tf2.
                         localMergers[tf2] = get!(localMergers, tf2, Set([tf2]))
                         push!(localMergers[tf2], tf1)
                     end
                 end
             end
-            
+
             # Merge the thread-local results into global dictionaries.
             for lo in localOverlapsArray
                 for (k,v) in lo
                     overlaps[k] = v
                 end
             end
-            
+
             for localx in localTFMergersArray
                 for (tf, mergerSet) in localx
                     if haskey(tfMergers, tf)
@@ -234,12 +219,11 @@ module MergeDegenerate
 
                 tf1 = tfNames[i]
                 tf1targets = tfTargDic[tf1]
-                
+
                 for j in i+1:length(tfNames)
                     tf2 = tfNames[j]
                     tf2targets = tfTargDic[tf2]
-                    
-                    # overlapSize = length(intersect(tf1targets, tf2targets))  # Slower
+
                     overlapSize = countOverlap(tf1targets, tf2targets)
                     overlaps[(tf1, tf2)] = overlapSize
                     overlaps[(tf2, tf1)] = overlapSize
@@ -255,17 +239,15 @@ module MergeDegenerate
         println("TF Overlaps Determination Complete!!")
 
         return tfMergers, overlaps, tfTargNums, tfNames
-        # method1 = tfMergers
-        # all((Set(method1[k]) == Set(tfMergers[k])) for k in keys(method1))
     end
 
 
     # Function to merge degenerate prior TFs
     function mergeDegenerateTFs(
                                 mergedTFsData::mergedTFsResult,
-                                networkFile::String; 
-                                outFileBase::Union{String,Nothing}=nothing, 
-                                fileFormat::Int = 2, 
+                                networkFile::String;
+                                outFileBase::Union{String,Nothing}=nothing,
+                                fileFormat::Int = 2,
                                 connector::String = "_"
                                 )
         """
@@ -277,15 +259,15 @@ module MergeDegenerate
             write_files::Bool=true
             )
         -- NamedTuple{(:merged, :mergedTfs),Tuple{DataFrame,Vector{String}}}
-        
-        - networkFile   – path to your priorFile 
-        - outFileBase   – optional “base path+stem” for writing the output files;
+
+        - networkFile   – path to your priorFile
+        - outFileBase   – optional "base path+stem" for writing the output files;
                             if `nothing` we auto‐derive it from `networkFile`.
         - fileFormat    – 1=long, 2=wide
-        - connector     – string between merged TF names, default “_”
+        - connector     – string between merged TF names, default "_"
         - write_files   – if true (default) write the five output files;
                             if false, run purely in‐memory.
-        
+
         Returns a NamedTuple
         - merged    = wide‐format DataFrame (targets×regulators)
         - mergedTfs = Vector{String} of all the new meta‐TF names
@@ -300,10 +282,10 @@ module MergeDegenerate
         # If no outFileBase was supplied, derive it from networkFile:
         stem = splitext(basename(networkFile))[1]                # filename without extension
         if outFileBase === nothing
-            dir  = dirname(networkFile)                             
-            outFileBase = joinpath(dir, stem)  
-        else 
-            outFileBase = joinpath(outFileBase,stem)                     
+            dir  = dirname(networkFile)
+            outFileBase = joinpath(dir, stem)
+        else
+            outFileBase = joinpath(outFileBase,stem)
         end
         netOutFile       = outFileBase * "_merged_sp.tsv"
         netMatOutFile    = outFileBase * "_merged.tsv"
@@ -323,8 +305,7 @@ module MergeDegenerate
         allMergedTfs = collect(keys(tfMergers))
         usedMergedTfs = Set{String}()    # keeps track of used TFs, so we don't output mergers twice
         printedTfs = String[]
-        # overlapsMap = Dict{String, Vector{String}}()    # key = printed TF name, value = list of overlap counts
-            
+
         try
             # Write header to network output file.
             println(netIO, "Regulator\tTarget\tWeight")
@@ -360,9 +341,7 @@ module MergeDegenerate
                     push!(printedTfs, tfPrint)
                 end
             end
-            
-            # # Write the overlaps output file:
-            # # First line is header
+
             println(overlapsIO, "\t" * join(printedTfs, "\t"))
             for tf in printedTfs
                 row = [ string(overlaps[(first(split(tf,connector)), first(split(pt,connector)))])
@@ -374,9 +353,6 @@ module MergeDegenerate
             close(netIO); close(overlapsIO); close(totTargIO); close(mergedTfsIO)
         end
 
-        # # Read the network output file into a DataFrame
-        # mergedTab = CSV.read(netOutFile, DataFrame; delim='\t')
-        # Convert the DataFrame to wide format
         netDF.Weight = parse.(Float64, netDF.Weight)
         mergedPrior = convertToWide(netDF; indices=(2, 1, 3))
         mergedPrior .= coalesce.(mergedPrior, 0.0)
@@ -384,51 +360,7 @@ module MergeDegenerate
         writeTSVWithEmptyFirstHeader(mergedPrior, netMatOutFile; delim ='\t')
 
         println("Output files:\n$mergedTfsIO\n$totTargOutFile\n$netOutFile\n$overlapsOutFile")
-        # return mergedPrior, mergedTfsList
-        # output = MergeDegeneratePriorOutput()
-        mergedTFsData.mergedPrior =  mergedPrior    
+        mergedTFsData.mergedPrior =  mergedPrior
         mergedTFsData.mergedTFMap = reduce(vcat, permutedims.(tabMergedTFs))   # Convert tabMergedTFs to a two columns matrix and then saves
-        # return output
 
     end
-end
-
-
-# # Usage
-# outFileBase = nothing
-# networkFile = "/data/miraldiNB/Michael/hCD4T_Katko/dataBank/Priors/5kb/proximity_5kb_b.tsv"
-# fileFormat = 2
-# res = mergedTFsResult()
-# mergeDegenerateTFs(res, networkFile; fileFormat = 2);
-
-# # networkFile = "/data/miraldiNB/Michael/Scripts/Inferelator_JL/julia_fxns/proximity_10kb_b_sp.tsv"
-# # outFileBase = "/data/miraldiNB/Michael/Scripts/Inferelator_JL/julia_fxns/"
-# # y = mergeDegeneratePriorTfs(networkFile, outFileBase, 1);
-
-# # original_df = CSV.read(networkFile, DataFrame; delim='\t')
-
-# # merged_sp = "/data/miraldiNB/Michael/Scripts/Inferelator_JL/Tfh10_Example/inputs/priors/_merged_sp.tsv"
-# # data = CSV.read(merged_sp, DataFrame; delim='\t')  # For tab-separated values
-# # Group by Regulator and Target, and filter for combinations that appear more than once
-
-# #=
-# # Count the occurrences of each Regulator-Target combination
-# counts = combine(groupby(data, [:Regulator, :Target]), nrow => :count)
-# df_with_counts = innerjoin(data, counts, on = [:Regulator, :Target])
-# df_filtered = filter(:count => x -> x > 1, df_with_counts)
-# df_sorted = sort(df_filtered, [:Regulator, :Target])
-
-# df_check = filter(row -> row.TF == "Foxp4" && row.Target == "0610043K17Rik", original_df)
-
-# data1 = CSV.read("/data/miraldiNB/Michael/Scripts/Inferelator_JL/Tfh10_Example/inputs/priors/_merged_sp3.tsv", DataFrame; delim='\t')
-
-# for (i, row) in enumerate(eachrow(data))
-# # Convert row.Regulator and row.Target 
-#     order_map[(String(row.Regulator), String(row.Target))] = i
-# end
-
-# df1_order = [ get(order_map, (String(data1.Regulator[i]), String(data1.Target[i])), typemax(Int))
-#                 for i in 1:nrow(data1) ]
-# row_indices = sortperm(df1_order)
-# sorted_df1 = data1[row_indices, :] =#
-
