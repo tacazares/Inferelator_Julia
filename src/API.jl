@@ -89,17 +89,17 @@ end
 # STEP 3 (cont.) · Estimate TF activity
 # -----------------------------------------------------------------------------
 """
-    estimateTFA(priorData, data; edgeSS=0, zscoreTargets=true, outputDir=".")
+    estimateTFA(priorData, data; edgeSS=0, zScoreTFA=true, outputDir=".")
 
 Estimate TF activity (TFA) by solving `prior * TFA ≈ targetExpression`
 via least squares, with optional bootstrap subsampling of targets.
 
 # Arguments
-- `priorData`       : `PriorTFAData` from `loadPrior`
-- `data`            : `GeneExpressionData` from `loadData`
-- `edgeSS`          : Number of edge subsamples (0 = no subsampling)
-- `zscoreTargets`   : Whether to z-score target expression before solving (default true)
-- `outputDir`       : Directory for intermediate output files (default ".")
+- `priorData`   : `PriorTFAData` from `loadPrior`
+- `data`        : `GeneExpressionData` from `loadData`
+- `edgeSS`      : Number of edge subsamples (0 = no subsampling)
+- `zScoreTFA`   : Z-score target expression before solving TFA (default true)
+- `outputDir`   : Directory for intermediate output files (default ".")
 
 # Returns
 TFA matrix as `Matrix{Float64}` (TFs × samples), also stored in `priorData.medTfas`
@@ -107,15 +107,15 @@ TFA matrix as `Matrix{Float64}` (TFs × samples), also stored in `priorData.medT
 function estimateTFA(
     priorData::PriorTFAData,
     data::GeneExpressionData;
-    edgeSS::Int          = 0,
-    zscoreTargets::Bool  = true,
-    outputDir::String    = "."
+    edgeSS::Int       = 0,
+    zScoreTFA::Bool   = true,
+    outputDir::String = "."
 )::Matrix{Float64}
 
     calculateTFA!(priorData, data;
-                  edgeSS          = edgeSS,
-                  zscoreTargExp   = zscoreTargets,
-                  outputDir       = outputDir)
+                  edgeSS    = edgeSS,
+                  zTarget   = zScoreTFA,
+                  outputDir = outputDir)
     return priorData.medTfas
 end
 
@@ -176,31 +176,34 @@ function buildNetwork(
     correlationWeight::Int          = 1,
     instabilityLevel::String        = "Network",
     useMeanEdgesPerGeneMode::Bool   = true,
-    zTarget::Bool                   = true,
+    zScoreLASSO::Bool               = true,
     outputDir::String               = "."
 )::BuildGrn
 
     tfaOpt = tfaMode ? "" : "TFmRNA"
 
     grnData = GrnData()
-    preparePredictorMat!(grnData, data, priorData, tfaOpt)
-    preparePenaltyMatrix!(data, grnData, priorFilePenalties, lambdaBias, tfaOpt)
+    preparePredictorMat!(grnData, data, priorData; tfaOpt = tfaOpt)
+    preparePenaltyMatrix!(data, grnData;
+                          priorFilePenalties = priorFilePenalties,
+                          lambdaBias         = lambdaBias,
+                          tfaOpt             = tfaOpt)
 
     # Warm-start pass (coarse λ range)
     constructSubsamples(data, grnData; totSS = bstarsTotSS, subsampleFrac = subsampleFrac)
     bstarsWarmStart(data, priorData, grnData;
-                    minLambda        = minLambda,
-                    maxLambda        = maxLambda,
-                    totLambdasBstars = totLambdasBstars,
+                    minLambda         = minLambda,
+                    maxLambda         = maxLambda,
+                    totLambdasBstars  = totLambdasBstars,
                     targetInstability = targetInstability,
-                    zTarget          = zTarget)
+                    zTarget           = zScoreLASSO)
 
     # Fine estimation pass
     constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
     bstartsEstimateInstability(grnData;
                                totLambdas       = totLambdas,
                                instabilityLevel = instabilityLevel,
-                               zTarget          = zTarget,
+                               zTarget          = zScoreLASSO,
                                outputDir        = outputDir)
 
     buildGrn = BuildGrn()
@@ -219,44 +222,6 @@ end
 
 
 # -----------------------------------------------------------------------------
-# STEP 5 · Aggregate networks across predictor modes
-# -----------------------------------------------------------------------------
-"""
-    aggregateNetworks(networkFiles; method=:max, meanEdgesPerGene=20,
-                      useMeanEdgesPerGene=true, outputDir=".")
-
-Merge multiple per-mode edge tables (TFA + TFmRNA) into a single consensus
-network by aggregating stability scores for each (TF, Gene) pair.
-
-# Arguments
-- `networkFiles`         : Vector of paths to edges.tsv files to merge
-- `method`               : Aggregation rule — `:max`, `:mean`, or `:min` (default `:max`)
-- `meanEdgesPerGene`     : Edge cap per target gene in the combined network (default 20)
-- `useMeanEdgesPerGene`  : Apply per-gene edge cap (default true)
-- `outputDir`            : Directory for combined_max.tsv and combined_max_sp.tsv
-
-# Returns
-Combined edge `DataFrame` with columns [TF, Gene, signedQuantile, Stability, ...]
-"""
-function aggregateNetworks(
-    networkFiles::Vector{String};
-    method::Symbol               = :max,
-    meanEdgesPerGene::Int        = 20,
-    useMeanEdgesPerGene::Bool    = true,
-    outputDir::String            = "."
-)
-
-    combineOpt = string(method)
-    combineGRNs(networkFiles;
-                combineOpt              = combineOpt,
-                meanEdgesPerGene        = meanEdgesPerGene,
-                useMeanEdgesPerGeneMode = useMeanEdgesPerGene,
-                saveDir                 = outputDir,
-                saveName                = "")
-end
-
-
-# -----------------------------------------------------------------------------
 # STEP 6 · Recalculate TFA using the combined network as a refined prior
 # -----------------------------------------------------------------------------
 """
@@ -269,13 +234,14 @@ activity, yielding a data-driven TFA matrix that reflects the final GRN.
 - `combinedNetFile` : Path to sparse combined network TSV (combined_max_sp.tsv)
 - `data`            : `GeneExpressionData`
 - `mergedTFs`       : `mergedTFsResult` from `loadPrior`
-- `tfaGeneFile`     : Optional gene list for TFA (default "")
-- `edgeSS`          : Edge subsampling replicates for TFA (default 0)
-- `minTargets`      : Minimum targets per TF (default 3)
-- `exprFile`        : Original expression file path (required by combineGRNS2)
-- `targFile`        : Target gene file path
-- `regFile`         : Regulator file path
-- `outputDir`       : Directory for refined TFA output (default ".")
+- `tfaGeneFile`  : Optional gene list for TFA (default "")
+- `edgeSS`       : Edge subsampling replicates for TFA (default 0)
+- `minTargets`   : Minimum targets per TF (default 3)
+- `zScoreTFA`    : Z-score target expression before solving TFA (default true)
+- `exprFile`     : Original expression file path
+- `targFile`     : Target gene file path
+- `regFile`      : Regulator file path
+- `outputDir`    : Directory for refined TFA output (default ".")
 
 # Returns
 Refined TFA matrix as `Matrix{Float64}` (regulators × samples)
@@ -287,15 +253,24 @@ function refineTFA(
     tfaGeneFile::String  = "",
     edgeSS::Int          = 0,
     minTargets::Int      = 3,
+    zScoreTFA::Bool      = true,
     exprFile::String     = "",
     targFile::String     = "",
     regFile::String      = "",
     outputDir::String    = "."
 )
 
-    combineGRNS2(data, mergedTFs, tfaGeneFile, combinedNetFile,
-                 edgeSS, minTargets, exprFile, targFile, regFile;
-                 outputDir = outputDir)
+    # Dispatch to internal refineTFA(data::GeneExpressionData, ...) — different first-arg type
+    refineTFA(data, mergedTFs;
+              priorFile    = combinedNetFile,
+              tfaGeneFile  = tfaGeneFile,
+              edgeSS       = edgeSS,
+              minTargets   = minTargets,
+              zTarget      = zScoreTFA,
+              geneExprFile = exprFile,
+              targFile     = targFile,
+              regFile      = regFile,
+              outputDir    = outputDir)
 end
 
 
@@ -358,7 +333,8 @@ function inferGRN(
     epsilon::Float64                = 0.01,
     minTargets::Int                 = 3,
     edgeSS::Int                     = 0,
-    zTarget::Bool                   = true,
+    zScoreTFA::Bool                 = true,
+    zScoreLASSO::Bool               = true,
     priorFilePenalties::Vector{String} = String[],
     lambdaBias::Vector{Float64}     = [0.5],
     totSS::Int                      = 80,
@@ -398,14 +374,14 @@ function inferGRN(
         correlationWeight       = correlationWeight,
         instabilityLevel        = instabilityLevel,
         useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
-        zTarget                 = zTarget,
+        zScoreLASSO             = zScoreLASSO,
     )
 
     # Steps 1–3
     data                = loadData(exprFile, targFile, regFile;
                                    tfaGeneFile = tfaGeneFile, epsilon = epsilon)
     priorData, mergedTFs = loadPrior(data, priorFile; minTargets = minTargets)
-    estimateTFA(priorData, data; edgeSS = edgeSS, zscoreTargets = zTarget,
+    estimateTFA(priorData, data; edgeSS = edgeSS, zScoreTFA = zScoreTFA,
                 outputDir = outputDir)
 
     # Step 4 — TFA mode
@@ -432,6 +408,7 @@ function inferGRN(
               tfaGeneFile = tfaGeneFile,
               edgeSS      = edgeSS,
               minTargets  = minTargets,
+              zScoreTFA   = zScoreTFA,   # API wrapper translates → zTarget internally
               exprFile    = exprFile,
               targFile    = targFile,
               regFile     = regFile,

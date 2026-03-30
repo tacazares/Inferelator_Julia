@@ -132,39 +132,6 @@ end
 #     return idxs
 # end
 
-function partialCorrelationMat(X::Matrix{Float64}; epsilon = 1e-7,  first_vs_all = false)
-    # Mean centering of the columns (mean subtraction)
-    X_centered = X .- mean(X, dims=1)
-
-    # Compute the covariance matrix
-    sigma = cov(X_centered)
-    # regularizing the covariance matrix to avoid ill-conditining and singularity
-    sigma = sigma + epsilon * I
-
-    # Precision matrix (inverse of the covariance matrix)
-    theta = inv(sigma)
-    p = size(X, 2)  # number of features/predictors/explanatory variables
-
-    if first_vs_all
-        # Compute partial correlation for the first variable vs all others
-        P = ones(1, p) # Initialize the partial correlation matrix
-        for j in 2:p
-            P[j] = -theta[1, j] / sqrt(theta[1, 1] * theta[j, j])
-        end 
-    else
-        # Compute the full partial correlation matrix
-        P = ones(p, p) # Initialize the partial correlation matrix
-        for i in 1:(p-1)
-            for j in (i+1):p
-                P[i , j] = -theta[i, j] / sqrt(theta[i, i] * theta[j, j])
-                P[j, i] = P[i, j]  # Symmetry
-            end
-        end
-    end
-
-    return P
-end
-
 function rankEdges!(expressionData::GeneExpressionData, tfaData::PriorTFAData, grnData::GrnData, buildGrn::BuildGrn; 
                     mergedTFsData::Union{mergedTFsResult, Nothing}=nothing,
                     useMeanEdgesPerGeneMode = true, 

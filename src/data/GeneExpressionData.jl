@@ -1,7 +1,4 @@
 # 00_Data/geneExpression.jl
-module Data
-
-    export GeneExpressionData, loadExpressionData!, loadAndFilterTargetGenes!, loadPotentialRegulators!, processTFAGenes!
 
     using DelimitedFiles
     using Statistics
@@ -10,35 +7,7 @@ module Data
     using Arrow
     using DataFrames
 
-    # Initialize data structure
-
-    mutable struct GeneExpressionData
-        cellLabels::Vector{String}
-        geneNames::Vector{String} # Full gene list
-        geneExpressionMat::Matrix{Float64} # Full Expression Matrix
-        potRegMatmRNA::Matrix{Float64}
-        potRegs::Vector{String}
-        potRegsmRNA::Vector{String}
-        targGenes::Vector{String} # Target gene list
-        targGeneMat::Matrix{Float64} # Filtered expression matrix
-        tfaGenes::Vector{String}
-        tfaGeneMat::Matrix{Float64}
-
-        function GeneExpressionData()
-            return new(
-                [],
-                [],
-                Matrix{Float64}(undef, 0, 0),
-                Matrix{Float64}(undef, 0, 0),
-                [],
-                [],
-                [],
-                Matrix{Float64}(undef, 0, 0),
-                [],
-                Matrix{Float64}(undef, 0, 0)
-            )
-        end
-    end
+    # Struct defined in src/Types.jl
 
 
     # Load Expression Data
@@ -125,13 +94,13 @@ module Data
             fid = open(targetGeneFile)
             targetGenes = readdlm(fid, String)
             close(fid)
-            
+
             # Find all geneNames that are in the targer gene file
             inds = findall(in(targetGenes), data.geneNames)
             if isempty(inds)
                 error("No target genes found in expression data!")
             end
-            
+
             # Filter target genes and expression matrix
             targGenes = data.geneNames[inds]
             targGeneMat = data.geneExpressionMat[inds, :]
@@ -180,14 +149,14 @@ module Data
             potentialRegs = readdlm(fid, String)
             close(fid)
             potentialRegs = vec(potentialRegs)
-            
+
             indsPotRegs = findall(in(data.geneNames), potentialRegs)
             potentialRegs = potentialRegs[indsPotRegs]
 
             inds = findall(in(potentialRegs), data.geneNames)
             potRegsmRNA = data.geneNames[inds]
             potRegMatmRNA = data.geneExpressionMat[inds, :]
-            
+
             data.potRegs = potentialRegs
             data.potRegsmRNA = potRegsmRNA
             data.potRegMatmRNA = potRegMatmRNA
@@ -232,19 +201,5 @@ module Data
             outputFile = joinpath(outputDir, "geneExprMat.jld")
             save_object(outputFile, data)
 
-            # cellLabels = data.cellLabels
-            # geneNames = data.geneNames
-            # geneExpressionMat = data.geneExpressionMat
-            # potRegs = data.potRegs
-            # potRegsmRNA = data.potRegsmRNA
-            # potRegMatmRNA = data.potRegMatmRNA
-            # targGenes = data.targGenes
-            # targGeneMat = data.targGeneMat
-            # tfaGenes = data.tfaGenes
-            # tfaGeneMat = data.tfaGeneMat
-            # @save outputFile cellLabels geneNames geneExpressionMat potRegs potRegsmRNA potRegMatmRNA targGenes targGeneMat tfaGenes tfaGeneMat
-
         end
     end
-
-end
