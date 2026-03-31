@@ -36,14 +36,14 @@
 #    Tip: load Revise before this file to pick up source edits without restarting:
 #         using Revise; using InferelatorJL
 # =============================================================================
-
+using Revise
 using InferelatorJL
 
 # =============================================================================
 # Configuration — edit these paths and parameters for your dataset
 # =============================================================================
 
-outputDir            = "/data/miraldiNB/Michael/projects/GRN/mCD4T_Wayman/Inferelator/test1"
+outputDir            = "/data/miraldiNB/Michael/projects/GRN/mCD4T_Wayman/Inferelator/test"
 tfaOptions           = ["", "TFmRNA"]   # "" → TFA mode, "TFmRNA" → mRNA mode
 totSS                = 80
 bstarsTotSS          = 5
