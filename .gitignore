@@ -1,1 +1,28 @@
 .DS_Store
+
+# Manifest is machine/Julia-version specific — each environment generates its own.
+# Only Project.toml is committed. Run `julia --project=. -e 'using Pkg; Pkg.instantiate()'`
+# to regenerate on a new machine or Julia version.
+Manifest.toml
+Manifest.toml.bak
+
+ =========================
+# Editor
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# Logs / temp
+# =========================
+*.log
+
+# =========================
+# Data / outputs (IMPORTANT for your project)
+# =========================
+results/
+output/
+*.tsv
+*.csv
+*.arrow
+
