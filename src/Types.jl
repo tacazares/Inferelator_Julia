@@ -100,9 +100,11 @@ mutable struct GrnData
     geneInstabilities::Matrix{Float64}
     lambdaRange::Vector{Float64}
     lambdaRangeGene::Vector{Vector{Float64}}
+    lambdaRangeWarm::Vector{Float64}             # ADDED: λ grid from warm-start pass (needed for instability bound plots)
     stabilityMat::Array{Float64}
     priorMatProcessed::Matrix{Float64}
     betas::Array{Float64,3}
+    targGenes::Vector{String}                    # ADDED: target gene names — row index of stabilityMat (needed for per-gene plots)
 
     function GrnData()
         return new(
@@ -123,9 +125,11 @@ mutable struct GrnData
             Matrix{Float64}(undef, 0, 0),        # geneInstabilities
             [],                                   # lambdaRange
             Vector{Vector{Float64}}(undef, 0),   # lambdaRangeGene
+            [],                                   # lambdaRangeWarm
             Array{Float64}(undef, 0, 0, 0),      # stabilityMat (3-D)
             Matrix{Float64}(undef, 0, 0),        # priorMatProcessed
-            Array{Float64,3}(undef, 0, 0, 0)    # betas
+            Array{Float64,3}(undef, 0, 0, 0),   # betas
+            []                                    # targGenes
         )
     end
 end
