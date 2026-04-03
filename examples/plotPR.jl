@@ -57,8 +57,7 @@ outNetFiles = OrderedDict(
     # "ge08.gMax"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_ge0p8/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
     # "ge05.gMax"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_ge0p5/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
     # "ge05lt1.gMax"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_ge0p5_lt1/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv"
-    "Reduce"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_TracLoop/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
-    "noReduce"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_TracLoop/bestRegion/noReduce/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
+    "TracLp"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_TracLoop/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
     # "pcHiC"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_pHiC/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
     # "pcHiC+TracLp"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_pHiC_TracLoop/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv"
 
