@@ -195,7 +195,7 @@ function check_column_norms(df::DataFrame; atol=1e-8)
     for col in names(df)[2:end]
         # Check if the column is numeric by testing its element type.
         if !(eltype(df[!, col]) <: Number)
-            println("Column: ", col, " is non-numeric, skipping...")
+            @info "Column $col is non-numeric, skipping norm check" 
             continue
         end
     # Convert the column values to Float64.
@@ -214,8 +214,7 @@ function check_column_norms(df::DataFrame; atol=1e-8)
     # println("Column: ", col, " Norm: ", col_norm, " ~ 1? ", is_norm_one)
     end
 
-    println("Total numeric columns normalized (True): ", count_true)
-    println("Total numeric columns not normalized (False): ", count_false)
+    @info "Column norm check complete" normalized=count_true not_normalized=count_false  
     return details, count_true, count_false
 end
 

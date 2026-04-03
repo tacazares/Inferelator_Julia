@@ -69,7 +69,9 @@ function runInferelator(;
     useMeanEdgesPerGeneMode::Bool   = true,
     combineOpt::String              = "max",       # "max", "mean", or "min"
     zScoreTFA::Bool                 = true,
-    zScoreLASSO::Bool               = true
+    zScoreLASSO::Bool               = true,
+    timeLagFile::String             = "",    # ADDED: path to 4-column time-lag TSV; leave "" to skip
+    timeLag::Real                   = 0.0    # ADDED: lag value in same units as timeLagFile (e.g. hours)
 )
     # Build output directory name (encodes key run parameters)
     subsamplePct    = subsampleFrac * 100
@@ -102,6 +104,9 @@ function runInferelator(;
                                  edgeSS    = edgeSS,
                                  zTarget   = zScoreTFA,
                                  outputDir = dirOut)
+
+    # Step 3b — Time-lag correction (no-op when timeLagFile = "")
+    InferelatorJL.applyTimeLag!(tfaData, data, timeLagFile, timeLag)  # ADDED: step 3b, wired from function signature
 
     # Step 4 — Build GRN for each predictor mode
     for tfaOpt in tfaOptions
@@ -173,12 +178,73 @@ end
 # =============================================================================
 # Run — replace paths with your own data
 # =============================================================================
+# CHANGED: define paths as variables so they can be reused in Step 7 below
 
-runInferelator(
-    geneExprFile       = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/pseudobulk/pseudobulk_scrna/CellType/Age/Factor1/min0.25M/counts_Tfh10_AgeCellType_pseudobulk_scrna_vst_batch_NoState.txt",
-    targFile           = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/GRN_NoState/inputs/target_genes/gene_targ_Tfh10_SigPct5Log2FC0p58FDR5.txt",
-    regFile            = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/GRN_NoState/inputs/pot_regs/TF_Tfh10_SigPct5Log2FC0p58FDR5_final.txt",
-    priorFile          = "/data/miraldiNB/Michael/Scripts/GRN/Inferelator_JL/Tfh10_Example/inputs/priors/ATAC/ATAC_Tfh10.tsv",
-    priorFilePenalties = ["/data/miraldiNB/Michael/Scripts/GRN/Inferelator_JL/Tfh10_Example/inputs/priors/ATAC/ATAC_Tfh10.tsv"],
-    outputDir          = "/data/miraldiNB/Michael/projects/GRN/mCD4T_Wayman/Inferelator/test"
+geneExprFile       = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/pseudobulk/pseudobulk_scrna/CellType/Age/Factor1/min0.25M/counts_Tfh10_AgeCellType_pseudobulk_scrna_vst_batch_NoState.txt"
+targFile           = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/GRN_NoState/inputs/target_genes/gene_targ_Tfh10_SigPct5Log2FC0p58FDR5.txt"
+regFile            = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/GRN_NoState/inputs/pot_regs/TF_Tfh10_SigPct5Log2FC0p58FDR5_final.txt"
+priorFile          = "/data/miraldiNB/Michael/Scripts/GRN/Inferelator_JL/Tfh10_Example/inputs/priors/ATAC/ATAC_Tfh10.tsv"
+priorFilePenalties = ["/data/miraldiNB/Michael/Scripts/GRN/Inferelator_JL/Tfh10_Example/inputs/priors/ATAC/ATAC_Tfh10.tsv"]
+outputDir          = "/data/miraldiNB/Michael/projects/GRN/mCD4T_Wayman/Inferelator/test"
+combineOpt         = "max"   # must match combineOpt inside runInferelator (default "max")
+
+runInferelator(;
+    geneExprFile       = geneExprFile,
+    targFile           = targFile,
+    regFile            = regFile,
+    priorFile          = priorFile,
+    priorFilePenalties = priorFilePenalties,
+    outputDir          = outputDir
 )
+
+# =============================================================================
+# STEP 7 — Evaluate networks against a gold standard (optional)
+# =============================================================================
+# Run after the pipeline completes. Edit gsParam to point to your gold-standard file(s).
+# dirOut below reproduces the name built inside runInferelator() with default parameters
+# (subsampleFrac=0.68, lambdaBias=[0.5], totSS=80, meanEdgesPerGene=20, instabilityLevel="Network").
+# Adjust the networkBaseName string if you changed any of those defaults.
+# See examples/plotPR.jl to generate PR curve plots from the saved results.
+# ADDED: step 7 for post-pipeline network evaluation using internal computePR directly
+using OrderedCollections
+import InferelatorJL: computePR
+
+dirOut         = joinpath(outputDir, "networkLambda0p5_80totSS_20tfsPerGene_subsamplePCT68")
+combinedNetDir = joinpath(dirOut, "Combined")
+
+outNetFiles = OrderedDict(
+    "TFA"      => joinpath(dirOut, "TFA",    "edges_subset.tsv"),
+    "TFmRNA"   => joinpath(dirOut, "TFmRNA", "edges_subset.tsv"),
+    "Combined" => joinpath(combinedNetDir, "combined_" * combineOpt * ".tsv")
+)
+
+# Gold standard(s): name => file path
+gsParam = OrderedDict(
+    "gsName" => "/path/to/goldStandard.tsv",   # replace with your gold-standard file
+)
+
+prFilesByGS = OrderedDict{String, OrderedDict{String, Any}}()
+for (legendLabel, outNetFile) in outNetFiles
+    @info "Processing network" network=legendLabel file=outNetFile
+    filepath = dirname(outNetFile)
+
+    for (gsName, gsFile) in gsParam
+        dirPR = joinpath(filepath, "PR", gsName)
+        mkpath(dirPR)
+        @info "Using GS" gs=gsName saveDir=dirPR
+
+        res = computePR(gsFile, outNetFile;
+                        gsRegsFile   = regFile,
+                        targGeneFile = targFile,
+                        breakTies    = true,
+                        doPerTF      = false,
+                        saveDir      = dirPR)
+
+        if !haskey(prFilesByGS, gsName)
+            prFilesByGS[gsName] = OrderedDict{String, Any}()
+        end
+        prFilesByGS[gsName][legendLabel] = haskey(res, :savedFile) ? res[:savedFile] : res
+    end
+end
+
+@info "Evaluation complete — see PR/ subdirectories for saved metrics"

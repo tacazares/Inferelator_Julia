@@ -40,7 +40,6 @@ using InferelatorJL
 # Configuration — edit these paths and parameters for your dataset
 # =============================================================================
 
-out
 outputDir            = "/data/miraldiNB/Michael/projects/GRN/mCD4T_Wayman/Inferelator/test3"
 tfaOptions           = ["", "TFmRNA"]   # "" → TFA mode, "TFmRNA" → mRNA mode
 totSS                = 80
@@ -104,6 +103,18 @@ estimateTFA(priorData, data;
             edgeSS    = edgeSS,
             zScoreTFA = zScoreTFA,
             outputDir = dirOut)
+
+# =============================================================================
+# STEP 3b — Apply time-lag correction (OPTIONAL — skip if not a time-series)
+# =============================================================================
+# Adjusts TFA and TF mRNA to account for the delay between TF gene expression
+# and active protein. Requires a 4-column TSV (SampleQ, TimeQ, SampleP, TimeP).
+# Leave timeLagFile = "" to skip this step entirely.
+# ADDED: step 3b for optional time-lag correction
+#
+# timeLagFile = "path/to/timeLag.tsv"   # set to "" to skip
+# timeLag     = 0.5                      # lag in same time units as timeLagFile
+# applyTimeLag(priorData, data, timeLagFile, timeLag)
 
 # =============================================================================
 # STEP 4 — Build GRN for each predictor mode
@@ -170,3 +181,50 @@ refineTFA(netsCombinedSparse, data, mergedTFs;
           outputDir   = combinedNetDir)
 
 @info "Pipeline complete" outputDir=dirOut
+
+# =============================================================================
+# STEP 7 — Evaluate networks against a gold standard
+# =============================================================================
+# Compare inferred networks against a gold-standard interaction set.
+# Computes precision-recall (PR) metrics and saves results to PR/ subdirectories.
+# Edit gsParam to point to your gold-standard file(s).
+# See examples/plotPR.jl to generate PR curve plots from the saved results.
+# ADDED: step 7 for network evaluation using the public evaluateNetwork API
+using OrderedCollections
+
+outNetFiles = OrderedDict(
+    "TFA"      => joinpath(dirOut, "TFA",    "edges_subset.tsv"),
+    "TFmRNA"   => joinpath(dirOut, "TFmRNA", "edges_subset.tsv"),
+    "Combined" => joinpath(combinedNetDir, "combined_" * combineOpt * ".tsv")
+)
+
+# Gold standard(s): name => file path
+gsParam = OrderedDict(
+    "gsName" => "/path/to/goldStandard.tsv",   # replace with your gold-standard name and file
+)
+
+prFilesByGS = OrderedDict{String, OrderedDict{String, Any}}()
+for (legendLabel, outNetFile) in outNetFiles
+    @info "Processing network" network=legendLabel file=outNetFile
+    filepath = dirname(outNetFile)
+
+    for (gsName, gsFile) in gsParam
+        dirPR = joinpath(filepath, "PR", gsName)
+        mkpath(dirPR)
+        @info "Using GS" gs=gsName saveDir=dirPR
+
+        res = evaluateNetwork(outNetFile, gsFile;
+                              gsRegsFile   = regFile,
+                              targGeneFile = targFile,
+                              breakTies    = true,
+                              doPerTF      = false,
+                              saveDir      = dirPR)
+
+        if !haskey(prFilesByGS, gsName)
+            prFilesByGS[gsName] = OrderedDict{String, Any}()
+        end
+        prFilesByGS[gsName][legendLabel] = haskey(res, :savedFile) ? res[:savedFile] : res
+    end
+end
+
+@info "Evaluation complete — see PR/ subdirectories for saved metrics"

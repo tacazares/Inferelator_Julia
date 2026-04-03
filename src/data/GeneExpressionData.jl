@@ -113,7 +113,7 @@
             if isempty(keep)
                 error("All target genes removed due to low variance!")
             else
-                println(length(targGenesFilter), " target genes retained after filtering")
+                @info "$(length(targGenesFilter)) target genes retained after filtering" 
             end
             data.targGenes = targGenesFilter
             data.targGeneMat = targGeneMatFilter

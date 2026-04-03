@@ -18,7 +18,7 @@ function padColors(listFiles)
     excessCT = lenFile - lenColor
 
     if excessCT > 0
-        println("Warning: There are more entries in listFilePR than available colors. Generating random colors for the excesses")
+        @warn "More entries than available colors — generating random colors for $excessCT excess entries"
         colorGen = [hex(RGB(rand(), rand(), rand())) for _ in 1:(excessCT + 12)]  # Generate random colors for plots
         uniqueCols = setdiff(colorGen, lineColors)
         # Pad lineColors with the unique additional colors
@@ -421,7 +421,7 @@ function plotPRCurves(listFilePR, dirOut::String, saveName::String;
 
     elseif length(yZoomPR) == 2
         # # ---- Two-subplot (broken y-axis) mode ----
-        fig, (ax1, ax2) = subplots(2, 1, sharex=true, figsize=(2,2), gridspec_kw=Dict("heightRatios" => heightRatios, 
+        fig, (ax1, ax2) = subplots(2, 1, sharex=true, figsize=(2,2), gridspec_kw=Dict("height_ratios" => heightRatios,
                                 "hspace" => 0.0), layout="constrained")   #6,5
 
         # Upper axis
@@ -644,7 +644,7 @@ function plotAUPR(gsParam::OrderedDict{String,<:AbstractDict}, dirOut::String;
     fig, _ = make_plot(saveLegend)
     fig.savefig(savePath, dpi=600)
     plt.close(fig)
-    println("Saved plot to:\n  $savePath")
+    @info "Saved plot to $savePath"
 end
 
 

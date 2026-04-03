@@ -121,6 +121,54 @@ end
 
 
 # -----------------------------------------------------------------------------
+# STEP 3b (optional) · Apply time-lag correction to TFA and TF mRNA
+# -----------------------------------------------------------------------------
+"""
+    applyTimeLag(priorData, data, timeLagFile, timeLag)
+
+Apply a time-lag correction to TFA and TF mRNA estimates after `estimateTFA`.
+
+For each consecutive time-point pair (P → Q) in `timeLagFile`, the value at
+sample Q is adjusted to account for the expected delay between TF mRNA and
+active TF protein:
+
+    adjusted[Q] = original[Q] − (original[Q] − original[P]) / Δt × timeLag
+
+Three matrices are updated in-place:
+- `priorData.medTfas`             — prior-based TFA
+- `priorData.noPriorRegsMat`      — mRNA for regulators absent from the prior
+- `data.potRegMatmRNA`            — mRNA for all potential regulators
+
+# Arguments
+- `priorData`    : `PriorTFAData` with `medTfas` already populated by `estimateTFA`
+- `data`         : `GeneExpressionData` from `loadData`
+- `timeLagFile`  : path to a 4-column tab-separated file (with header).
+  Columns: sample Q name, time of Q, sample P name, time of P.
+  Only time-series pairs need to be listed; unpaired samples are unchanged.
+- `timeLag`      : delay between TF mRNA and protein activity, in the same
+  time units as the values in `timeLagFile` (e.g., hours).
+
+# Example
+```julia
+data, priorData, _ = loadData(...), loadPrior(...), ...
+estimateTFA(priorData, data)
+applyTimeLag(priorData, data, "timeLag.tsv", 0.5)
+```
+
+# Reference
+Bonneau et al. (2006) Genome Biology; Miraldi et al. `integratePrior_estTFA_timeLag`.
+"""
+function applyTimeLag(
+    priorData::PriorTFAData,
+    data::GeneExpressionData,
+    timeLagFile::String,
+    timeLag::Real
+)
+    applyTimeLag!(priorData, data, timeLagFile, timeLag)
+end
+
+
+# -----------------------------------------------------------------------------
 # STEP 4 · Build a single GRN (one predictor mode)
 # -----------------------------------------------------------------------------
 """
@@ -238,6 +286,8 @@ activity, yielding a data-driven TFA matrix that reflects the final GRN.
 - `edgeSS`       : Edge subsampling replicates for TFA (default 0)
 - `minTargets`   : Minimum targets per TF (default 3)
 - `zScoreTFA`    : Z-score target expression before solving TFA (default true)
+- `timeLagFile`  : Path to 4-column time-lag TSV; omit or pass "" to skip (default "")
+- `timeLag`      : Time-lag value in the same units as `timeLagFile` (default 0.0)
 - `exprFile`     : Original expression file path
 - `targFile`     : Target gene file path
 - `regFile`      : Regulator file path
@@ -254,6 +304,8 @@ function refineTFA(
     edgeSS::Int          = 0,
     minTargets::Int      = 3,
     zScoreTFA::Bool      = true,
+    timeLagFile::String  = "",
+    timeLag::Real        = 0.0,
     exprFile::String     = "",
     targFile::String     = "",
     regFile::String      = "",
@@ -267,6 +319,8 @@ function refineTFA(
               edgeSS       = edgeSS,
               minTargets   = minTargets,
               zTarget      = zScoreTFA,
+              timeLagFile  = timeLagFile,
+              timeLag      = timeLag,
               geneExprFile = exprFile,
               targFile     = targFile,
               regFile      = regFile,
@@ -278,27 +332,57 @@ end
 # STEP 7 · Evaluate a network against a gold standard
 # -----------------------------------------------------------------------------
 """
-    evaluateNetwork(networkFile, goldStandard; metric=:AUPR) → NamedTuple
+    evaluateNetwork(networkFile, goldStandard; kwargs...) → Dict
 
-Evaluate a ranked edge list against a gold-standard network.
+Evaluate a ranked edge list against a gold-standard interaction set using
+precision-recall (PR) metrics.  Wraps the internal `computePR` function.
 
 # Arguments
-- `networkFile`   : Path to edges TSV (TF, Gene, signedQuantile, ...)
-- `goldStandard`  : Path to gold-standard network TSV
-- `metric`        : Evaluation metric — `:AUPR`, `:AUROC`, or `:both` (default `:AUPR`)
+- `networkFile`       : Path to inferred GRN edge list (TSV with TF, Gene, score columns)
+- `goldStandard`      : Path to gold-standard network TSV (sparse TF × Gene format)
+- `gsRegsFile`        : Optional regulator list to restrict evaluation to shared TFs
+                        (default "" → use all TFs present in both files)
+- `targGeneFile`      : Optional target gene list to restrict the evaluation universe
+                        (default "" → use all genes present in both files)
+- `breakTies`         : Randomly break ties in edge scores before ranking (default true)
+- `partialAUPRlimit`  : Recall limit for partial AUPR calculation (default 0.1)
+- `doPerTF`           : Compute per-TF PR curves in addition to global PR (default false)
+- `saveDir`           : Directory to write PR result files; "" skips saving (default "")
 
 # Returns
-`NamedTuple` with fields depending on `metric`:
-`(aupr=..., auroc=..., precision=..., recall=...)`
+`Dict` with keys `:aupr`, `:auroc`, `:precisions`, `:recalls`, `:randPR`, and
+optionally `:savedFile` (path to the saved results file when `saveDir` is set).
+
+# Example
+```julia
+res = evaluateNetwork(
+    joinpath(dirOut, "TFA", "edges_subset.tsv"),
+    "/path/to/goldStandard.tsv";
+    gsRegsFile   = regFile,
+    targGeneFile = targFile,
+    saveDir      = joinpath(dirOut, "TFA", "PR", "ChIP")
+)
+println("AUPR: ", res[:aupr])
+```
 """
 function evaluateNetwork(
     networkFile::String,
     goldStandard::String;
-    metric::Symbol = :AUPR
+    gsRegsFile::String        = "",
+    targGeneFile::String      = "",
+    breakTies::Bool           = true,
+    partialAUPRlimit::Float64 = 0.1,
+    doPerTF::Bool             = false,
+    saveDir::String           = ""
 )
-
-    # Delegates to Metrics submodule
-    computeMacroMetrics(networkFile, goldStandard; metric = metric)
+    # CHANGED: replaced incorrect computeMacroMetrics call with computePR
+    computePR(goldStandard, networkFile;
+              gsRegsFile       = isempty(gsRegsFile)   ? nothing : gsRegsFile,
+              targGeneFile     = isempty(targGeneFile)  ? nothing : targGeneFile,
+              breakTies        = breakTies,
+              partialAUPRlimit = partialAUPRlimit,
+              doPerTF          = doPerTF,
+              saveDir          = isempty(saveDir)       ? nothing : saveDir)
 end
 
 
@@ -349,7 +433,9 @@ function inferGRN(
     correlationWeight::Int          = 1,
     instabilityLevel::String        = "Network",
     useMeanEdgesPerGeneMode::Bool   = true,
-    combineMethod::Symbol           = :max
+    combineMethod::Symbol           = :max,
+    timeLagFile::String             = "",
+    timeLag::Real                   = 0.0
 )::BuildGrn
 
     mkpath(outputDir)
@@ -383,6 +469,9 @@ function inferGRN(
     priorData, mergedTFs = loadPrior(data, priorFile; minTargets = minTargets)
     estimateTFA(priorData, data; edgeSS = edgeSS, zScoreTFA = zScoreTFA,
                 outputDir = outputDir)
+    if !isempty(timeLagFile)
+        applyTimeLag(priorData, data, timeLagFile, timeLag)
+    end
 
     # Step 4 — TFA mode
     tfaGrn  = buildNetwork(data, priorData; tfaMode = true,
@@ -408,7 +497,9 @@ function inferGRN(
               tfaGeneFile = tfaGeneFile,
               edgeSS      = edgeSS,
               minTargets  = minTargets,
-              zScoreTFA   = zScoreTFA,   # API wrapper translates → zTarget internally
+              zScoreTFA   = zScoreTFA,
+              timeLagFile = timeLagFile,
+              timeLag     = timeLag,
               exprFile    = exprFile,
               targFile    = targFile,
               regFile     = regFile,
