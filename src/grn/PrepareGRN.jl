@@ -118,6 +118,7 @@ function preparePredictorMat!(grnData::GrnData, expressionData::GeneExpressionDa
     grnData.allPredictors = allPredictors
     grnData.responseMat = expressionData.targGeneMat
     grnData.priorMatProcessed = priorMat
+    grnData.targGenes = copy(expressionData.targGenes)   # ADDED: store gene names for per-gene instability plots
 end
 
 
@@ -334,9 +335,10 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
     grnData.netInstabilitiesUb = netInstabilitiesUb
     grnData.instabilitiesLb = instabilitiesLb
     grnData.instabilitiesUb = instabilitiesUb
+    grnData.lambdaRangeWarm = lambdaRange   # ADDED: store warm-start λ grid for instability bound plots
 end
 
-function bstartsEstimateInstability(grnData::GrnData; totLambdas = 10, instabilityLevel = "Gene", zTarget = false, outputDir::Union{String, Nothing}=nothing)
+function bstartsEstimateInstability(grnData::GrnData; totLambdas = 10, instabilityLevel = "Gene", zTarget = false, targetInstability::Float64 = 0.05, outputDir::Union{String, Nothing}=nothing)  # ADDED: targetInstability for λ selection diagnostic plot
 
     totResponses,totSamps = size(grnData.responseMat) # totResponses is same as length(grnData["targGenes"])
     totPreds = size(grnData.predictorMat,1)
@@ -450,5 +452,10 @@ function bstartsEstimateInstability(grnData::GrnData; totLambdas = 10, instabili
     if outputDir !== nothing && outputDir !== ""
         outputFile = joinpath(outputDir, "instabOutMat.jld")
         save_object(outputFile, grnData)
+        # ADDED: auto-generate network-level diagnostic plots alongside saved data
+        plotInstabilityCurves(grnData;
+                              mode              = :network,
+                              targetInstability = targetInstability,
+                              outputDir         = outputDir)
     end
 end

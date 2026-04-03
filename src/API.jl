@@ -249,10 +249,11 @@ function buildNetwork(
     # Fine estimation pass
     constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
     bstartsEstimateInstability(grnData;
-                               totLambdas       = totLambdas,
-                               instabilityLevel = instabilityLevel,
-                               zTarget          = zScoreLASSO,
-                               outputDir        = outputDir)
+                               totLambdas        = totLambdas,
+                               instabilityLevel  = instabilityLevel,
+                               zTarget           = zScoreLASSO,
+                               targetInstability = targetInstability,   # ADDED: forward for λ selection diagnostic plot
+                               outputDir         = outputDir)
 
     buildGrn = BuildGrn()
     chooseLambda!(grnData, buildGrn;
