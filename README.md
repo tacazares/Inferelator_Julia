@@ -62,6 +62,9 @@ data = loadData(exprFile, targFile, regFile)
 priorData, mergedTFs = loadPrior(data, priorFile)
 estimateTFA(priorData, data; outputDir = dirOut)
 
+# Step 3b (optional) — apply time-lag correction (time-series data only)
+# applyTimeLag(priorData, data, timeLagFile, timeLag)
+
 # Step 4 — infer GRN (TFA predictors)
 buildNetwork(data, priorData;
              tfaMode   = true,
@@ -74,6 +77,10 @@ aggregateNetworks([tfaEdges, mrnaEdges];
 
 # Step 6 — refine TFA using the consensus network as a new prior
 refineTFA(combinedNetFile, data, mergedTFs; outputDir = dirOut)
+
+# Step 7 — evaluate against a gold standard
+evaluateNetwork(networkFile, goldStandard;
+                gsRegsFile = regFile, targGeneFile = targFile, saveDir = dirPR)
 ```
 
 See [`examples/interactive_pipeline.jl`](examples/interactive_pipeline.jl) for a
@@ -83,16 +90,17 @@ fully annotated step-by-step example.
 
 ## Pipeline
 
-The full pipeline has six steps. Each step is a single function call.
+The full pipeline has seven steps. Each step is a single function call.
 
 | Step | Function | Description |
 |---|---|---|
 | 1 | `loadData` | Load expression matrix; filter to target genes and regulators |
 | 2–3 | `loadPrior` + `estimateTFA` | Process prior, merge degenerate TFs, estimate TF activity via least squares |
+| 3b *(optional)* | `applyTimeLag` | Adjust TFA and TF mRNA for the delay between TF transcription and protein activity (time-series data only) |
 | 4 | `buildNetwork` | Run mLASSO-StARS for one predictor mode (TFA or TF mRNA) |
 | 5 | `aggregateNetworks` | Combine TFA and mRNA edge lists into a consensus network |
 | 6 | `refineTFA` | Re-estimate TFA using the consensus network as a data-driven prior |
-| — | `evaluateNetwork` | Evaluate any network against gold standards (PR/ROC curves) |
+| 7 | `evaluateNetwork` | Evaluate any network against gold standards (PR/ROC curves) |
 
 Steps 4–6 are typically run twice (TFA mode and TF mRNA mode) and the results
 aggregated in Step 5.
@@ -120,7 +128,9 @@ All outputs are written under the directory specified by `outputDir`.
 |---|---|
 | `edges.tsv` | Full ranked edge table: TF, gene, signed quantile, stability, partial correlation, inPrior flag |
 | `edges_subset.tsv` | Top edges after applying the `meanEdgesPerGene` cap |
-| `instability_*.jld2` | Raw instability arrays across the λ grid (for diagnostics) |
+| `instabOutMat.jld` | Serialised `GrnData` struct with full instability arrays across the λ grid |
+| `instability_diagnostic_network.png` | Two-panel plot: model size vs λ (left) and bStARS instability bounds vs λ (right) |
+| `instability_selection_network.png` | \|Instability − target\| vs λ with dot at the chosen λ |
 | `combined_<method>.tsv` | Aggregated network (long format) |
 | `combined_<method>_sp.tsv` | Aggregated network (sparse prior format, for downstream use) |
 
@@ -139,6 +149,8 @@ All outputs are written under the directory specified by `outputDir`.
 | `zScoreTFA` | `true` | Z-score expression before TFA estimation |
 | `zScoreLASSO` | `true` | Z-score expression before LASSO regression |
 | `method` | `:max` | Network aggregation rule: `:max`, `:mean`, or `:min` stability |
+| `timeLagFile` | `""` | Path to 4-column TSV (sampleQ, timeQ, sampleP, timeP) for time-lag correction; `""` skips step 3b |
+| `timeLag` | `0.0` | Lag between TF mRNA and protein activity, in the same time units as `timeLagFile` |
 
 ---
 
@@ -153,6 +165,7 @@ priorData, mergedTFs    = loadPrior(data, priorFile; minTargets=3)
 ### Core pipeline
 ```julia
 estimateTFA(priorData, data; edgeSS=0, zScoreTFA=true, outputDir=".")
+applyTimeLag(priorData, data, timeLagFile, timeLag)          # optional step 3b
 buildNetwork(data, priorData; tfaMode=true, totSS=80, lambdaBias=[0.5], ...)
 aggregateNetworks(netFiles; method=:max, meanEdgesPerGene=20, outputDir=".")
 refineTFA(combinedNetFile, data, mergedTFs; zScoreTFA=true, outputDir=".")
@@ -160,7 +173,8 @@ refineTFA(combinedNetFile, data, mergedTFs; zScoreTFA=true, outputDir=".")
 
 ### Evaluation
 ```julia
-evaluateNetwork(gsFile, netFile; gsRegsFile="", targGeneFile="", outputDir=".")
+evaluateNetwork(networkFile, goldStandard;
+                gsRegsFile="", targGeneFile="", doPerTF=false, saveDir="")
 ```
 
 ### Utilities
@@ -183,10 +197,12 @@ saveData(data, tfaData, grnData, buildGrn, dir, "checkpoint.jld2")
 
 | File | Description |
 |---|---|
-| [`interactive_pipeline.jl`](examples/interactive_pipeline.jl) | Full pipeline, step-by-step in the REPL, public API |
-| [`run_pipeline.jl`](examples/run_pipeline.jl) | Full pipeline wrapped in `runInferelator()` for batch use |
+| [`interactive_pipeline.jl`](examples/interactive_pipeline.jl) | Full 7-step pipeline, step-by-step in the REPL, public API only |
+| [`interactive_pipeline_dev.jl`](examples/interactive_pipeline_dev.jl) | Same pipeline using module-qualified internal calls (for development/debugging) |
+| [`run_pipeline.jl`](examples/run_pipeline.jl) | Full pipeline wrapped in `runInferelator()` for batch/cluster use, public API |
+| [`run_pipeline_dev.jl`](examples/run_pipeline_dev.jl) | Same wrapped function using internal calls |
 | [`utilityExamples.jl`](examples/utilityExamples.jl) | All utility functions demonstrated with synthetic data; no input files needed |
-| [`plotPR.jl`](examples/plotPR.jl) | Evaluate networks against gold standards and generate PR curve plots |
+| [`plotPR.jl`](examples/plotPR.jl) | Standalone script to load saved PR results and generate PR curve plots |
 
 ---
 
