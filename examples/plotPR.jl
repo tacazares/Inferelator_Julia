@@ -32,6 +32,7 @@
 #         using Revise; using InferelatorJL
 # =============================================================================
 
+using Revise
 using InferelatorJL
 import InferelatorJL: computePR, plotPRCurves, plotAUPR, loadPRData
 
@@ -42,15 +43,25 @@ using OrderedCollections
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Output directory for plots
-dirOutPlot = "/data/miraldiNB/Michael/projects/goldStandard/Human/fdr0p01_vs_IDR"
+dirOutPlot = "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/Figures"
 
 # Base name for saved figures (set to "" to use gold-standard name only)
-figBaseName = "ALL_5KB_sharedTF_Target"
+figBaseName = "PRIM_TracLp"
 
 # Network files to compare: legend label => file path
 outNetFiles = OrderedDict(
-    "FDR0p01" => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_FDR0p01/20260325/GS_5KB_TSS/sumRegion_reducePool/All/context_mean/global_max/GS_All_peakScore10_top50_sharedTF_Gene_withIDR.tsv",
-    "IDR"     => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260321/GS_5KB_TSS/sumRegion_reducePool/All/context_mean/global_max/GS_All_peakScore10_top50_sharedTF_Gene_withFDR0p01.tsv"
+    # "FDR0p01" => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_FDR0p01/20260325/GS_5KB_TSS/bestRegion_reducePool/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50_sharedTF_Gene_withIDR.tsv",
+    # "IDR"     => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260321/GS_5KB_TSS/bestRegion_reducePool/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50_sharedTF_Gene_withFDR0p01.tsv"
+
+    # "eq1.gMax" => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_eq1/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
+    # "ge08.gMax"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_ge0p8/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
+    # "ge05.gMax"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_ge0p5/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
+    # "ge05lt1.gMax"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_ge0p5_lt1/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv"
+    "Reduce"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_TracLoop/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
+    "noReduce"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_TracLoop/bestRegion/noReduce/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
+    # "pcHiC"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_pHiC/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
+    # "pcHiC+TracLp"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_pHiC_TracLoop/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv"
+
 )
 
 # Gold-standard files: name => file path
@@ -61,7 +72,6 @@ gsParam = OrderedDict(
 # Evaluation inputs
 prTargGeneFile = "/data/miraldiNB/Michael/projects/GRN/hCD4T_Katko/dataBank/potTargRegs/Targs/all_targs_autosomal.txt"
 gsRegsFile     = "/data/miraldiNB/Katko/Projects/Barski_CD4_Multiome/Outs/Prior/SubsetPriors/all_TFs.txt"
-rankColTrn     = 3       # column in GRN file corresponding to interaction ranks/confidences
 breakTies      = true
 auprLimit      = 0.1
 
@@ -70,9 +80,9 @@ lineTypes    = []   # e.g. ["-", "--", "-."] — one per dataset; [] uses defaul
 lineWidths   = []   # per dataset; [] uses defaults
 lineColors   = []   # per dataset; [] uses defaults
 xLimitRecall = 0.1
-yStepSize    = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]  # one per gold standard
+yStepSize    = [0.1, 0.1]  # one per gold standard
 yScaleType   = "linear"
-yZoomPR      = [[0.4, 0.9], [0.2, 0.9], [0.3, 0.9], [], [], [], [], [], [], [], [0.7, 0.9], [], [0.7, 0.9]]  # one per gold standard, or []
+yZoomPR      = [[0.3, 0.9], [], []]  # one per gold standard, or []
 heightRatios = [0.5, 3.0]  # height ratios for broken y-axis panels
 isInside     = false   # legend inside the plot
 plotAUPRflag = false   # set to true to also generate AUPR bar plots
@@ -96,6 +106,12 @@ end
 
 # ── 1. Calculate PR/ROC metrics ───────────────────────────────────────────────
 @info "---- 1. Calculating Performance Metrics for the Networks -----"
+
+parts = String[]
+isempty(gsRegsFile)     || push!(parts, "regs")
+isempty(prTargGeneFile) || push!(parts, "targs")
+prSuffix = isempty(parts) ? "" : "_" * join(parts, "_")
+
 prFilesByGS = OrderedDict{String, OrderedDict{String, Any}}()
 
 for (legendLabel, outNetFile) in outNetFiles
@@ -103,19 +119,17 @@ for (legendLabel, outNetFile) in outNetFiles
     filepath = dirname(outNetFile)
 
     for (gsName, gsFile) in gsParam
-        dirOut = isempty(gsRegsFile) ? joinpath(filepath, "PR_noPotRegs", gsName) :
-                                       joinpath(filepath, "PR_withPotRegs", gsName)
-        mkpath(dirOut)
-        @info "Using GS" gs=gsName saveDir=dirOut
+        dirPR = joinpath(filepath, "PR" * prSuffix, gsName)
+        mkpath(dirPR)
+        @info "Using GS" gs=gsName saveDir=dirPR
 
         res = computePR(gsFile, outNetFile;
                         gsRegsFile       = gsRegsFile,
                         targGeneFile     = prTargGeneFile,
-                        rankColTrn       = rankColTrn,
                         breakTies        = breakTies,
                         partialAUPRlimit = auprLimit,
                         doPerTF          = doPerTF,
-                        saveDir          = dirOut)
+                        saveDir          = dirPR)
 
         if !haskey(prFilesByGS, gsName)
             prFilesByGS[gsName] = OrderedDict{String, Any}()
@@ -123,6 +137,15 @@ for (legendLabel, outNetFile) in outNetFiles
         prFilesByGS[gsName][legendLabel] = haskey(res, :savedFile) ? res[:savedFile] : res
     end
 end
+
+
+# Example filter
+# keepKeys = ["eq1.gMax", "ge05lt1.gMax"]   # replace with the keys you want
+# subset = OrderedDict(
+#     gs => OrderedDict(k => v for (k, v) in nets if k in keepKeys)
+#     for (gs, nets) in aa
+# )
+# prFilesByGS = subset
 
 # ── 2. Global PR curves ───────────────────────────────────────────────────────
 @info "---- 2. Generating Global PR Curves ----"

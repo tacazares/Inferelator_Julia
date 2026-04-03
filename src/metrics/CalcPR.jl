@@ -21,8 +21,8 @@ non-empty, non-zero recall arrays contribute to the average.
 
 # Returns
 An `OrderedDict` with two nested `OrderedDict`s:
-- `:macroPR`  → `:auprInterpolated`, `:precisions`, `:recalls`
-- `:macroROC` → `:aurocInterpolated`, `:fprs`, `:tprs`
+- `:macroPR`  -> `:auprInterpolated`, `:precisions`, `:recalls`
+- `:macroROC` -> `:aurocInterpolated`, `:fprs`, `:tprs`
 
 # Example
 ```julia
@@ -148,7 +148,7 @@ function evaluatePerTF(
     totGsRegs = length(uniGsRegs)
     totTargGenes = maximum(length.(gsEdgesByTf))  # approximate max targets
 
-    println("---- Computing Per-TF Metrics")
+    @info "Computing per-TF metrics"
     gsAuprsByTf = zeros(totGsRegs,1)
     gsArocsByTf = zeros(totGsRegs,1)
     gsPrecisionsByTf = Array{Float64}[]
@@ -283,7 +283,7 @@ Results are saved to a `.jld` file and PR/ROC curves are plotted automatically.
 # Keyword Arguments
 - `gsRegsFile::Union{String,Nothing}=nothing`   : File listing regulators to include. Default uses all GS regulators.
 - `targGeneFile::Union{String,Nothing}=nothing` : File listing target genes to include. Default uses all GS targets.
-- `rankColTrn::Int=3`                           : Column index for scores in the inferred GRN file.
+# - `rankColTrn::Int=3`                           : Column index for scores in the inferred GRN file.
 - `breakTies::Bool=true`                        : Average indicators over tied rankings to smooth PR curves.
 - `partialAUPRlimit::Float64=0.1` : Maximum recall cutoff for computing partial AUPR.
 - `xLimitRecall::Float64=1.0`     : Maximum recall shown on the x-axis of diagnostic PR plots.
@@ -326,12 +326,6 @@ results[:macroPR][:auprInterpolated] # macro AUPR
 #         breakTies::Bool = true, partialLimitRecall::Float64 = 0.1, doPerTF::Bool = true,
 #         saveDir::Union{String, Nothing} = nothing, target_points::Int = 1000, min_step::Float64 = 1e-4, 
 #         step_method::Symbol = :min_gap)
-
-infTrnFile = "/data/miraldiNB/anthony/Inferelator_Julia/outputs/251125_HAE_ISGF3_GAS_combined/combined/combined_sp.tsv"
-gsFile   = "/data/miraldiNB/giulia/GS_10/IFNB_A549.tsv"
-targGeneFile = "/data/miraldiNB/giulia/intersection/IFNB_A549_target_genes.txt"
-gsRegsFile = "/data/miraldiNB/Katko/Projects/Julia/AnthonyData/tfs.txt"
-
 function computePR(
         gsFile::String, infTrnFile::String;
         gsRegsFile::Union{String, Nothing} = nothing, targGeneFile::Union{String, Nothing} = nothing,  # filtering

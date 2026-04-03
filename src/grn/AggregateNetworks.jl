@@ -202,17 +202,17 @@ function aggregateNetworks(nets2combine::Vector{String};
     # ────── 5. choose top meanEdgesPerGene * nGenes edges ──────────────────────
 
     if useMeanEdgesPerGeneMode
-        println("Selecting the top (meanEdgesPerGene * unique targets) edges")
+        @info "Selecting top (meanEdgesPerGene × unique targets) edges globally"  # CHANGED: was println
         # Select the top `topEdgeCount = meanEdgesPerGene * uniqueGenes` & compute quantiles for all rankings
         uniqueGenes = length(unique(aggregatedDf.Gene))   # current number of unique targets
         topEdgeCount = round(Int, meanEdgesPerGene * uniqueGenes)     # Compute the number of edges to select
         selectionIndices = 1:min(topEdgeCount, nrow(aggregatedDf))
     else
-        println("Selecting the top meanEdgesPerGene edges per target gene")
+        @info "Selecting top $meanEdgesPerGene edges per target gene"  # CHANGED: was println
         selectionIndices = firstNByGroup(aggregatedDf.Gene, meanEdgesPerGene)
     end
     selectedDf = aggregatedDf[selectionIndices, :]
-    println("Selected $(length(selectionIndices)) edges using meanEdgesPerGene = $meanEdgesPerGene.")
+    @info "Selected $(length(selectionIndices)) edges" meanEdgesPerGene  # CHANGED: was println
 
     # # ────── 6. Generate strokeWidth and colors
     # # ────── Color calculations for JP-Gene-Viz 
@@ -242,7 +242,7 @@ function aggregateNetworks(nets2combine::Vector{String};
         wideDf = coalesce.(wideDf, 0)
         wideFile = joinpath(saveDir, "combined_$(tag)_sp.tsv")
         writeTSVWithEmptyFirstHeader(wideDf, wideFile; delim = '\t')
-        println("Files written under ", saveDir)
+        @info "Files written under $saveDir"  # CHANGED: was println
     end
 
     return selectedDf

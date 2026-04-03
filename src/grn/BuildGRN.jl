@@ -61,14 +61,14 @@ function chooseLambda!(grnData::GrnData, buildGrn::BuildGrn; instabilityLevel = 
             end
         end
         if totMins > 0
-            println("Target instability reached at minimum lambda for ", string(totMins), " gene(s)")
+            @info "Target instability reached at minimum lambda for $totMins gene(s)"
         end
         if totMaxs > 0
-            println("Target instability reached at maximum lambda for ", string(totMaxs), " gene(s)")
+            @info "Target instability reached at maximum lambda for $totMaxs gene(s)"
         end
 
     elseif instabilityLevel == "Network"
-        println("Network instabilities detected.")
+        @info "Network instabilities detected"
         # find the single lambda corresponding to the cutoff
         devs = abs.(grnData.netInstabilities .- targetInstability)
         globalMin = findmin(devs)
@@ -77,9 +77,9 @@ function chooseLambda!(grnData::GrnData, buildGrn::BuildGrn; instabilityLevel = 
         # take the largest lambda that is closest to targetInstability
         minInd = minInds[end]
         if minInd == 1
-            println("Minimum lambda was used for maximum instability ", string(grnData.netInstabilities[minInd]), " to reach target cut = ", string(targetInstability), ".")
+            @info "Minimum lambda used" instability=grnData.netInstabilities[minInd] targetInstability
         elseif minInd == totLambdas
-            println("Maximum lambda was used for minimum instability ", string(grnData.netInstabilities[minInd]), " to reach target cut = ", string(targetInstability), ".")
+            @info "Maximum lambda used" instability=grnData.netInstabilities[minInd] targetInstability
         end
         networkStability[:, :] = grnData.stabilityMat[minInd, :, :]
         betas = grnData.betas[:, :, minInd]
@@ -211,7 +211,7 @@ function rankEdges!(expressionData::GeneExpressionData, tfaData::PriorTFAData, g
         if length(findall(x -> x == NaN, prho)) == 0  # make sure there weren't too many edges, 
             allCoefs[targInd,regressIndsMat] = prho
         else
-            println(currTarg, " pcorr was singular, # TFs = ", string(length(regressIndsMat)))
+            @warn "Partial correlation was singular for $currTarg" nTFs=length(regressIndsMat)
         end   
 
         allQuants[targInd,regressIndsMat] = quantiles[targRankInds[rankVecInds]]
@@ -257,7 +257,7 @@ function rankEdges!(expressionData::GeneExpressionData, tfaData::PriorTFAData, g
                 end                
             end
         end
-        println("Total of ", string(length(rmInds)), " TFs expanded.")
+        @info "$(length(rmInds)) merged TFs expanded to individual TFs"
         keepInds = setdiff(1:totNetTfs,rmInds)
         # remove merged TFs and add individual TFs
         if length(addRegs) > 0
@@ -271,7 +271,7 @@ function rankEdges!(expressionData::GeneExpressionData, tfaData::PriorTFAData, g
             append!(mergeTfLocVec, addLoc)
         end
     else
-        println("No merged TFs file found.")      
+        @info "No merged TFs data found — skipping TF expansion"
     end
 
     ## re-rank based on possibly de-merged TFs
