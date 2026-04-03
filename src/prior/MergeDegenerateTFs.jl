@@ -101,7 +101,7 @@
                         push!(tfTargDic[tfName], (target, weight))
                     end
                 end
-                println("Dict Created!!!")
+                @info "TF-target dictionary created from long-format network"
             end
 
         elseif fileFormat == 2
@@ -163,7 +163,7 @@
             localOverlapsArray = [Dict{Tuple{String, String}, Int}() for i in 1:nthreads]
             localTFMergersArray = [Dict{String, Set{String}}() for i in 1:nthreads]
 
-            println("Running in threaded mode ...")
+            @info "Computing TF overlaps in threaded mode" nthreads
             Threads.@threads for i in 1:length(tfNames)
                 # Use the thread's id (an integer between 1 and nthreads) to access its local storage.
                 tid = threadid()
@@ -214,7 +214,7 @@
             end
 
         else
-            println("Running in sequential mode ...")
+            @info "Computing TF overlaps in sequential mode"  
             for i in 1:length(tfNames)
 
                 tf1 = tfNames[i]
@@ -236,7 +236,7 @@
                 end
             end
         end
-        println("TF Overlaps Determination Complete!!")
+        @info "TF overlap determination complete"  
 
         return tfMergers, overlaps, tfTargNums, tfNames
     end
@@ -348,7 +348,7 @@
                         for pt in printedTfs ]
                 println(overlapsIO, tf * '\t' * join(row, '\t'))
             end
-            println("Overlap Output File Successfully Written!!!")
+            @info "Overlap output file written"  
         finally
             close(netIO); close(overlapsIO); close(totTargIO); close(mergedTfsIO)
         end
@@ -359,7 +359,7 @@
         # write to file, while makig sure the first column is unnamed.
         writeTSVWithEmptyFirstHeader(mergedPrior, netMatOutFile; delim ='\t')
 
-        println("Output files:\n$mergedTfsIO\n$totTargOutFile\n$netOutFile\n$overlapsOutFile")
+        @info "Output files written" mergedTFs=mergedTfsOutFile targetTotals=totTargOutFile network=netOutFile overlaps=overlapsOutFile  
         mergedTFsData.mergedPrior =  mergedPrior
         mergedTFsData.mergedTFMap = reduce(vcat, permutedims.(tabMergedTFs))   # Convert tabMergedTFs to a two columns matrix and then saves
 

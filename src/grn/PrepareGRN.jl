@@ -60,7 +60,7 @@ Dependencies:
 
 function preparePredictorMat!(grnData::GrnData, expressionData::GeneExpressionData, priorData::PriorTFAData; tfaOpt::String = "")
     if tfaOpt != ""
-        println("noTfa option")
+        @info "TF mRNA mode (no TFA)"
         pRegs = priorData.pRegsNoTfa;
         pTargs = priorData.pTargsNoTfa;
         priorMatrix = priorData.priorMatrixNoTfa;
@@ -112,7 +112,7 @@ function preparePredictorMat!(grnData::GrnData, expressionData::GeneExpressionDa
             currPredMat[prend, :] = expressionData.potRegMatmRNA[prendInd, :]
         end
         predictorMat = currPredMat
-        println("TF mRNA used.")
+        @info "TF mRNA used as predictors" 
     end
     grnData.predictorMat = predictorMat
     grnData.allPredictors = allPredictors
@@ -196,7 +196,7 @@ function constructSubsamples(expressionData::GeneExpressionData, grnData::GrnDat
     totSamps = length(expressionData.cellLabels)
 
     if !(leaveOutSampleList in (nothing, ""))
-        println("Leave-out set detected: ", leaveOutSampleList)
+        @info "Leave-out set detected" leaveOutSampleList 
         # get leave-out set of samples
         fin = open(leaveOutSampleList)
         C = readdlm(fin,skipstart=0)
@@ -206,7 +206,7 @@ function constructSubsamples(expressionData::GeneExpressionData, grnData::GrnDat
         testInds = first.(testInds)
         trainInds = setdiff(1:totSamps,testInds)
     else        
-        println("Full gene expression matrix used.")
+        @info "Full gene expression matrix used (no leave-out set)"
         trainInds = 1:totSamps # all training samples used
         testInds = []
     end
