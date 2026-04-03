@@ -1,4 +1,4 @@
-.DS_Store
+**/.DS_Store
 
 # Manifest is machine/Julia-version specific — each environment generates its own.
 # Only Project.toml is committed. Run `julia --project=. -e 'using Pkg; Pkg.instantiate()'`
