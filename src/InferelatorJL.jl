@@ -50,6 +50,7 @@ export
     loadData,
     loadPrior,
     estimateTFA,
+    applyTimeLag,
     buildNetwork,
     aggregateNetworks,
     refineTFA,
@@ -72,12 +73,15 @@ export
 
     # -------------------------------------------------------------------------
     # Internal pipeline functions are intentionally NOT exported.
-    # They remain accessible via InferelatorJL.<function> if needed.
+    # They remain accessible via InferelatorJL.<function> or
+    # import InferelatorJL: <function> if needed.
     #   loadExpressionData!   loadAndFilterTargetGenes!   loadPotentialRegulators!
     #   processTFAGenes!      processPriorFile!            mergeDegenerateTFs
-    #   calculateTFA!         preparePredictorMat!         preparePenaltyMatrix!
-    #   constructSubsamples   bstarsWarmStart              bstartsEstimateInstability
-    #   chooseLambda!         rankEdges!
+    #   calculateTFA!         applyTimeLag!                preparePredictorMat!
+    #   preparePenaltyMatrix! constructSubsamples          bstarsWarmStart
+    #   bstartsEstimateInstability  chooseLambda!          rankEdges!
+    #   computePR             plotPRCurves                 plotAUPR
+    #   loadPRData
     # -------------------------------------------------------------------------
     # -------------------------------------------------------------------------
 

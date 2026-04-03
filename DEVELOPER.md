@@ -23,39 +23,39 @@ The `@v1.X` in the Pkg prompt shows your Julia version (e.g. `@v1.12` locally, `
 
 ---
 
-## One-time setup — local Mac (Julia 1.12)
+## One-time setup (do once per machine / Julia version)
 
-```julia
+**Interactive session (REPL available):**
+
+```
 julia> ]
-(@v1.12) pkg> dev /Users/owop7y/Desktop/InferelatorJL
-(@v1.12) pkg> instantiate
+(@v1.X) pkg> activate /path/to/InferelatorJL   ← step 1: enter package environment
+(InferelatorJL) pkg> instantiate                ← step 2: install all dependencies
+(InferelatorJL) pkg> build PyCall               ← step 3: build Python bridge
+(InferelatorJL) pkg> activate                   ← step 4: return to global (no argument)
+(@v1.X) pkg> dev /path/to/InferelatorJL         ← step 5: register package globally
 ```
 
-Then rebuild PyCall so PyPlot works (required once per Julia version):
+> **Why this order matters:**
+> `dev` must be run from the global environment (`@v1.X`), not from inside the
+> package environment. Running `dev .` while InferelatorJL is active will error with
+> `"has the same name or UUID as the active project"`.
+> Always return to global with `activate` (no argument) before running `dev`.
 
-```julia
-(@v1.12) pkg> build PyCall
-```
-
-- `dev` registers the package by path — Julia reads directly from your folder, no copying.
-- `instantiate` resolves and downloads all dependencies, generating a local `Manifest.toml`.
-- `build PyCall` compiles the Python–Julia bridge for your current Python and Julia version.
-
----
-
-## One-time setup — cluster (Julia 1.7.3)
-
-The cluster does not use `dev` mode — you work directly inside the package folder.
-Run this once after cloning or pulling the repo:
+**Non-interactive (no REPL, e.g. a batch job):**
 
 ```bash
-# On the cluster, inside the InferelatorJL directory:
-julia --project=. -e 'using Pkg; Pkg.instantiate()'
-julia --project=. -e 'using Pkg; Pkg.build("PyCall")'
+julia --project=/path/to/InferelatorJL -e 'using Pkg; Pkg.instantiate()'
+julia --project=/path/to/InferelatorJL -e 'using Pkg; Pkg.build("PyCall")'
 ```
 
-This generates a fresh `Manifest.toml` on the cluster, resolved specifically for Julia 1.7.3.
-The cluster Manifest is gitignored — it never conflicts with your local one.
+> `dev` is not needed in non-interactive mode — scripts are run with
+> `julia --project=/path/to/InferelatorJL` which activates the environment automatically.
+
+- `instantiate` resolves all dependencies from `Project.toml` and generates a local `Manifest.toml`.
+- `build PyCall` compiles the Python–Julia bridge — required once per Julia version.
+- `dev` registers the package globally so `using InferelatorJL` works from any session without activation.
+- The `Manifest.toml` is gitignored — each machine generates its own.
 
 ---
 
@@ -125,22 +125,27 @@ julia --project=. test/runtests.jl
 `Manifest.toml` is **gitignored** — it is machine and Julia-version specific.
 Only `Project.toml` is committed. Each machine generates its own Manifest.
 
-| Machine | What to do once | What gets committed |
-|---|---|---|
-| Local Mac (1.12) | `] instantiate` + `] build PyCall` | nothing (Manifest is gitignored) |
-| Cluster (1.7.3) | `Pkg.instantiate()` + `Pkg.build("PyCall")` | nothing |
-| Any new machine | same as above | nothing |
+**Any new machine — do once (use whichever style suits you):**
 
-**After `git pull` that changes `Project.toml`** (e.g. new dependency added), re-run:
-```bash
-julia --project=. -e 'using Pkg; Pkg.instantiate()'
+```
+# Interactive
+] activate /path/to/InferelatorJL
+] instantiate
+] build PyCall
+
+# Non-interactive
+julia --project=/path/to/InferelatorJL -e 'using Pkg; Pkg.instantiate(); Pkg.build("PyCall")'
 ```
 
-**After upgrading Julia** to a new version, re-run both:
-```bash
-julia --project=. -e 'using Pkg; Pkg.instantiate()'
-julia --project=. -e 'using Pkg; Pkg.build("PyCall")'
+**After `git pull` that changes `Project.toml`** (new dependency added):
+
 ```
+# Interactive              |  Non-interactive
+] activate /path/...       |  julia --project=. -e 'using Pkg; Pkg.instantiate()'
+] instantiate              |
+```
+
+**After upgrading Julia** to a new version — re-run both instantiate and build PyCall (same commands as above).
 
 **If `Pkg.instantiate()` fails** with `"empty intersection"` or `"unsatisfiable requirements"`:
 a specific package's compat bound in `Project.toml` is too narrow for the Julia version
@@ -214,6 +219,7 @@ in that project, not globally.
 | `MethodError: no method matching ...` | Wrong argument types or order | Check function signature with `?functionname` |
 | `KeyError` on a dict field | Field name wrong | `fieldnames(StructType)` to check |
 | `PyCall not properly installed` | PyCall not built for this Julia version | `] build PyCall` |
+| `has the same name or UUID as the active project` | Ran `] dev .` while inside the package environment | `] activate` first (return to global), then `] dev /path/to/InferelatorJL` |
 | `expected package Test to be registered` | `] test` sandbox bug in Julia ≥ 1.10 | Use `julia --project=. test/runtests.jl` instead |
 | `empty intersection between X@Y.Z and project compatibility` | Compat bound too narrow for installed version | Widen bound for that package in `Project.toml`, then `] instantiate` |
 | `Warning: Package X does not have Y in its dependencies` | Missing dep in `Project.toml` | Add it with `] add Y` |

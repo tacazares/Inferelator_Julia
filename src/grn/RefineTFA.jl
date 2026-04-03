@@ -30,6 +30,8 @@ function refineTFA(data::GeneExpressionData, mergedTFsData::mergedTFsResult;
                    edgeSS::Int                        = 0,
                    minTargets::Int                    = 3,
                    zTarget::Bool                      = true,
+                   timeLagFile::String                = "",
+                   timeLag::Real                      = 0.0,
                    geneExprFile::String               = "",
                    targFile::String                   = "",
                    regFile::String                    = "",
@@ -50,8 +52,7 @@ function refineTFA(data::GeneExpressionData, mergedTFsData::mergedTFsResult;
     missingFields = [field for field in requiredFields if isempty(getfield(data, field))]
 
     if !isempty(missingFields)
-        println("Missing or empty fields in data: ", missingFields)
-        println("Generating required data by loading from input files...")
+        @info "Missing or empty fields in data — will reload from input files" missingFields
     
         requiredFiles = [
             ("Gene Expression File", geneExprFile),
@@ -74,8 +75,11 @@ function refineTFA(data::GeneExpressionData, mergedTFsData::mergedTFsResult;
 
     # 2. Integrate prior information for TFA estimation
     tfaData = PriorTFAData()
-    processPriorFile!(tfaData, data, priorFile; mergedTFsData, minTargets = minTargets);
-    calculateTFA!(tfaData, data; edgeSS = edgeSS, zTarget = zTarget, outputDir = outputDir); 
+    processPriorFile!(tfaData, data, priorFile; mergedTFsData, minTargets = minTargets)
+    calculateTFA!(tfaData, data; edgeSS = edgeSS, zTarget = zTarget, outputDir = outputDir)
+    if !isempty(timeLagFile)
+        applyTimeLag!(tfaData, data, timeLagFile, timeLag)
+    end
 
     # Save TFA as a text file# Save median TFA if outputDir is specified
     if !isnothing(outputDir)
