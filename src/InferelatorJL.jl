@@ -25,6 +25,7 @@ include("grn/BuildGRN.jl")              # bstarsWarmStart, bstartsEstimateInstab
 include("grn/AggregateNetworks.jl")     # combineGRNs / aggregateNetworks
 include("grn/RefineTFA.jl")             # combineGRNS2 / refineTFA
 include("grn/UtilsGRN.jl")             # GRN utility helpers
+include("grn/PlotInstability.jl")       # ADDED: plotInstabilityCurves — λ selection diagnostic plots
 
 # ── Metrics ───────────────────────────────────────────────────────────────────
 include("metrics/Constants.jl")
@@ -81,7 +82,7 @@ export
     #   preparePenaltyMatrix! constructSubsamples          bstarsWarmStart
     #   bstartsEstimateInstability  chooseLambda!          rankEdges!
     #   computePR             plotPRCurves                 plotAUPR
-    #   loadPRData
+    #   loadPRData            plotInstabilityCurves
     # -------------------------------------------------------------------------
     # -------------------------------------------------------------------------
 
