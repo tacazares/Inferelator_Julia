@@ -43,34 +43,28 @@ using OrderedCollections
 # ══════════════════════════════════════════════════════════════════════════════
 
 # Output directory for plots
-dirOutPlot = "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/Figures"
+dirOutPlot = "/path/to/plots"
 
 # Base name for saved figures (set to "" to use gold-standard name only)
-figBaseName = "PRIM_TracLp"
+figBaseName = "myRun"
 
 # Network files to compare: legend label => file path
+# Add one entry per network you want to compare
 outNetFiles = OrderedDict(
-    # "FDR0p01" => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_FDR0p01/20260325/GS_5KB_TSS/bestRegion_reducePool/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50_sharedTF_Gene_withIDR.tsv",
-    # "IDR"     => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260321/GS_5KB_TSS/bestRegion_reducePool/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50_sharedTF_Gene_withFDR0p01.tsv"
-
-    # "eq1.gMax" => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_eq1/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
-    # "ge08.gMax"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_ge0p8/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
-    # "ge05.gMax"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_ge0p5/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
-    # "ge05lt1.gMax"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_Cicero_tss_annotated_ge0p5_lt1/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv"
-    "TracLp"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_TracLoop/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
-    # "pcHiC"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_pHiC/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv",
-    # "pcHiC+TracLp"  => "/data/miraldiNB/Michael/projects/goldStandard/Human/GS_IDR/20260402/GS_pHiC_TracLoop/bestRegion/Primary_CD4T/context_mean/global_max/GS_Primary_CD4T_peakScore10_top50.tsv"
-
+    "TFA"      => "/path/to/output/networkLambda.../TFA/edges_subset.tsv",
+    "TFmRNA"   => "/path/to/output/networkLambda.../TFmRNA/edges_subset.tsv",
+    "Combined" => "/path/to/output/networkLambda.../Combined/combined_max.tsv",
 )
 
 # Gold-standard files: name => file path
+# Add one entry per gold standard you want to evaluate against
 gsParam = OrderedDict(
-    "KO_GS" => "/data/miraldiNB/Michael/projects/GRN/hCD4T_Katko/dataBank/GS/KO_GS_50_Michael_autosomal.tsv",
+    "gsName" => "/path/to/goldStandard.tsv",
 )
 
 # Evaluation inputs
-prTargGeneFile = "/data/miraldiNB/Michael/projects/GRN/hCD4T_Katko/dataBank/potTargRegs/Targs/all_targs_autosomal.txt"
-gsRegsFile     = "/data/miraldiNB/Katko/Projects/Barski_CD4_Multiome/Outs/Prior/SubsetPriors/all_TFs.txt"
+prTargGeneFile = "/path/to/target_genes.txt"   # set to "" to use all genes
+gsRegsFile     = "/path/to/potential_regs.txt" # set to "" to use all TFs
 breakTies      = true
 auprLimit      = 0.1
 

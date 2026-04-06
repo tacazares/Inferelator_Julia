@@ -40,7 +40,7 @@ using InferelatorJL
 # Configuration — edit these paths and parameters for your dataset
 # =============================================================================
 
-outputDir            = "/data/miraldiNB/Michael/projects/GRN/mCD4T_Wayman/Inferelator/test3"
+outputDir            = "/path/to/output"
 tfaOptions           = ["", "TFmRNA"]   # "" → TFA mode, "TFmRNA" → mRNA mode
 totSS                = 80
 bstarsTotSS          = 5
@@ -61,12 +61,12 @@ combineOpt           = "max"       # "max", "mean", or "min"
 zScoreTFA            = true        # z-score targets before TFA estimation
 zScoreLASSO          = true        # z-score targets before LASSO regression
 
-geneExprFile = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/pseudobulk/pseudobulk_scrna/CellType/Age/Factor1/min0.25M/counts_Tfh10_AgeCellType_pseudobulk_scrna_vst_batch_downsample_0.25M.txt"
-targFile     = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/GRN_NoState/inputs/target_genes/gene_targ_Tfh10_SigPct5Log2FC0p58FDR5.txt"
-regFile      = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/GRN_NoState/inputs/pot_regs/TF_Tfh10_SigPct5Log2FC0p58FDR5_final.txt"
+geneExprFile = "/path/to/expression.txt"         # genes × samples (.txt or .arrow)
+targFile     = "/path/to/target_genes.txt"       # one gene per line
+regFile      = "/path/to/potential_regs.txt"     # one TF per line
 
-priorFile          = "/data/miraldiNB/Michael/Scripts/GRN/Inferelator_JL/Tfh10_Example/inputs/priors/ATAC/ATAC_Tfh10.tsv"
-priorFilePenalties = ["/data/miraldiNB/Michael/Scripts/GRN/Inferelator_JL/Tfh10_Example/inputs/priors/ATAC/ATAC_Tfh10.tsv"]
+priorFile          = "/path/to/prior.tsv"
+priorFilePenalties = ["/path/to/prior.tsv"]
 tfaGeneFile        = ""   # optional: restrict TFA estimation to a gene subset
 
 # --- Build output directory name (encodes key run parameters)
