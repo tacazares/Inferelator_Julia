@@ -65,12 +65,12 @@ function runInferelator(;
     edgeSS::Int                     = 0,
     lambdaBias::Vector{Float64}     = [0.5],
     instabilityLevel::String        = "Network",  # "Network" or "Gene"
-    useMeanEdgesPerGeneMode::Bool   = true,
+    useMeanEdgesPerGeneMode::Bool   = true,       
     combineOpt::String              = "max",       # "max", "mean", or "min"
     zScoreTFA::Bool                 = true,
     zScoreLASSO::Bool               = true,
-    timeLagFile::String             = "",    # ADDED: path to 4-column time-lag TSV; leave "" to skip
-    timeLag::Real                   = 0.0    # ADDED: lag value in same units as timeLagFile (e.g. hours)
+    timeLagFile::String             = "",    # path to 4-column time-lag TSV; leave "" to skip
+    timeLag::Real                   = 0.0    # lag value in same units as timeLagFile (e.g. hours)
 )
     # Build output directory name (encodes key run parameters)
     subsamplePct    = subsampleFrac * 100
@@ -158,12 +158,12 @@ end
 # =============================================================================
 # CHANGED: define paths as variables so they can be reused in Step 7 below
 
-geneExprFile       = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/pseudobulk/pseudobulk_scrna/CellType/Age/Factor1/min0.25M/counts_Tfh10_AgeCellType_pseudobulk_scrna_vst_batch_NoState.txt"
-targFile           = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/GRN_NoState/inputs/target_genes/gene_targ_Tfh10_SigPct5Log2FC0p58FDR5.txt"
-regFile            = "/data/miraldiNB/wayman/projects/Tfh10/outs/202404/GRN_NoState/inputs/pot_regs/TF_Tfh10_SigPct5Log2FC0p58FDR5_final.txt"
-priorFile          = "/data/miraldiNB/Michael/Scripts/GRN/Inferelator_JL/Tfh10_Example/inputs/priors/ATAC/ATAC_Tfh10.tsv"
-priorFilePenalties = ["/data/miraldiNB/Michael/Scripts/GRN/Inferelator_JL/Tfh10_Example/inputs/priors/ATAC/ATAC_Tfh10.tsv"]
-outputDir          = "/data/miraldiNB/Michael/projects/GRN/mCD4T_Wayman/Inferelator/test"
+geneExprFile       = "/path/to/expression.txt"         # genes × samples (.txt or .arrow)
+targFile           = "/path/to/target_genes.txt"       # one gene per line
+regFile            = "/path/to/potential_regs.txt"     # one TF per line
+priorFile          = "/path/to/prior.tsv"
+priorFilePenalties = ["/path/to/prior.tsv"]
+outputDir          = "/path/to/output"
 combineOpt         = "max"   # must match combineOpt inside runInferelator (default "max")
 
 runInferelator(;
