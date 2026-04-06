@@ -1,16 +1,17 @@
-# Developer Notes — InferelatorJL
+# Contributing to InferelatorJL
 
-Personal reference for working on this codebase.
+Guidelines for developers working on this codebase. Covers environment setup,
+development workflow, adding new features, and common pitfalls.
 
 ---
 
-## Starting Julia
+## Getting started with Julia
 
 ```bash
-julia          # from any terminal
+julia          # launch from any terminal
 ```
 
-Julia has four REPL modes. You switch between them with single keystrokes:
+Julia has four REPL modes. Switch between them with single keystrokes:
 
 | Mode | Prompt | Enter with | Exit with |
 |---|---|---|---|
@@ -19,11 +20,11 @@ Julia has four REPL modes. You switch between them with single keystrokes:
 | Shell | `shell>` | `;` | Backspace |
 | Help | `help?>` | `?` | Backspace |
 
-The `@v1.X` in the Pkg prompt shows your Julia version (e.g. `@v1.12` locally, `@v1.7` on the cluster).
+The `@v1.X` in the Pkg prompt reflects your Julia version (e.g. `@v1.12` locally, `@v1.7` on the cluster).
 
 ---
 
-## One-time setup (do once per machine / Julia version)
+## One-time setup (per machine / Julia version)
 
 **Interactive session (REPL available):**
 
@@ -55,7 +56,7 @@ julia --project=/path/to/InferelatorJL -e 'using Pkg; Pkg.build("PyCall")'
 - `instantiate` resolves all dependencies from `Project.toml` and generates a local `Manifest.toml`.
 - `build PyCall` compiles the Python–Julia bridge — required once per Julia version.
 - `dev` registers the package globally so `using InferelatorJL` works from any session without activation.
-- The `Manifest.toml` is gitignored — each machine generates its own.
+- `Manifest.toml` is gitignored — each machine generates its own.
 
 ---
 
@@ -125,7 +126,7 @@ julia --project=. test/runtests.jl
 `Manifest.toml` is **gitignored** — it is machine and Julia-version specific.
 Only `Project.toml` is committed. Each machine generates its own Manifest.
 
-**Any new machine — do once (use whichever style suits you):**
+**Any new machine — do once:**
 
 ```
 # Interactive
@@ -149,12 +150,12 @@ julia --project=/path/to/InferelatorJL -e 'using Pkg; Pkg.instantiate(); Pkg.bui
 
 **If `Pkg.instantiate()` fails** with `"empty intersection"` or `"unsatisfiable requirements"`:
 a specific package's compat bound in `Project.toml` is too narrow for the Julia version
-being used. The error names the package. Widen its bound in `Project.toml` and re-run.
+being used. The error names the package — widen its bound in `Project.toml` and re-run.
 Example: `GLMNet = "0.4, 0.5, 0.6, 0.7"` → `"0.4, 0.5, 0.6, 0.7, 0.8"`.
 
 ---
 
-## Checking what changed / what's loaded
+## Inspecting the loaded package
 
 ```julia
 # Which version is active?
@@ -180,15 +181,15 @@ propertynames(data)
 ## Switching between dev and release versions
 
 ```julia
-# Currently using dev (your local folder):
-] status InferelatorJL     # shows   InferelatorJL [path] /Users/owop7y/Desktop/InferelatorJL
+# Currently using dev (local source folder):
+] status InferelatorJL     # shows path to local folder
 
-# Switch to the released version (once it is published):
+# Switch to the released version (once published):
 ] free InferelatorJL       # removes the dev pin
 ] add InferelatorJL        # installs from registry
 
 # Switch back to dev:
-] dev /Users/owop7y/Desktop/InferelatorJL
+] dev /path/to/InferelatorJL
 ```
 
 ---
@@ -209,43 +210,44 @@ in that project, not globally.
 
 ---
 
-## Common errors and what they mean
+## Common errors and fixes
 
 | Error | Cause | Fix |
 |---|---|---|
 | `UndefVarError: InferelatorJL not defined` | Package not loaded | `using InferelatorJL` |
 | `UndefVarError: Revise not defined` | Revise not installed | `] add Revise` |
 | `Cannot redefine struct` | Changed `Types.jl` | Restart Julia |
-| `MethodError: no method matching ...` | Wrong argument types or order | Check function signature with `?functionname` |
+| `MethodError: no method matching ...` | Wrong argument types or order | Check signature with `?functionname` |
 | `KeyError` on a dict field | Field name wrong | `fieldnames(StructType)` to check |
 | `PyCall not properly installed` | PyCall not built for this Julia version | `] build PyCall` |
-| `has the same name or UUID as the active project` | Ran `] dev .` while inside the package environment | `] activate` first (return to global), then `] dev /path/to/InferelatorJL` |
+| `has the same name or UUID as the active project` | Ran `] dev .` inside the package environment | `] activate` first, then `] dev /path/to/InferelatorJL` |
 | `expected package Test to be registered` | `] test` sandbox bug in Julia ≥ 1.10 | Use `julia --project=. test/runtests.jl` instead |
-| `empty intersection between X@Y.Z and project compatibility` | Compat bound too narrow for installed version | Widen bound for that package in `Project.toml`, then `] instantiate` |
+| `empty intersection between X@Y.Z and project compatibility` | Compat bound too narrow | Widen bound in `Project.toml`, then `] instantiate` |
 | `Warning: Package X does not have Y in its dependencies` | Missing dep in `Project.toml` | Add it with `] add Y` |
 
 ---
 
-## Package structure quick reference
+## Package structure
 
 ```
 src/
   InferelatorJL.jl      ← module entry point, all includes and using statements
   Types.jl              ← ALL struct definitions (edit here for new fields)
-  API.jl                ← public API (loadData, buildNetwork, etc.)
+  API.jl                ← public API (loadData, buildNetwork, evaluateNetwork, etc.)
   data/                 ← data loading functions
   prior/                ← TF merging
   utils/                ← DataUtils, NetworkIO, PartialCorrelation
-  grn/                  ← pipeline core (PrepareGRN, BuildGRN, AggregateNetworks, RefineTFA)
+  grn/                  ← pipeline core (PrepareGRN, BuildGRN, AggregateNetworks,
+                           RefineTFA, PlotInstability)
   metrics/              ← PR/ROC evaluation and plotting
 
 examples/
-  interactive_pipeline.jl      ← step-by-step, public API (your main reference)
-  interactive_pipeline_dev.jl  ← step-by-step, internal calls (your dev reference)
+  interactive_pipeline.jl      ← step-by-step, public API
+  interactive_pipeline_dev.jl  ← step-by-step, internal calls
   run_pipeline.jl              ← function-wrapped, public API
   run_pipeline_dev.jl          ← function-wrapped, internal calls
   utilityExamples.jl           ← utility function demos, no real data needed
-  plotPR.jl                    ← PR curve evaluation
+  plotPR.jl                    ← standalone PR curve evaluation and plotting
 
 test/
   runtests.jl           ← unit tests (run with: julia --project=. test/runtests.jl)
@@ -260,13 +262,23 @@ test/
 3. Add a docstring above the function definition (Julia uses `"""..."""`).
 4. If it is a utility function without real-data requirements, add an example
    to `examples/utilityExamples.jl`.
+5. Add a test to `test/runtests.jl`.
+
+---
+
+## Adding a new internal (non-exported) function
+
+1. Write the function in the appropriate `src/` file.
+2. Add its name to the internal comment block at the bottom of `src/InferelatorJL.jl`
+   so it is discoverable.
+3. It remains accessible via `import InferelatorJL: myFunction` for power users.
 
 ---
 
 ## Adding a new dependency
 
-1. `] add PackageName` — this updates both `Project.toml` and `Manifest.toml`.
+1. `] add PackageName` — updates both `Project.toml` and `Manifest.toml`.
 2. Add `using PackageName` in the appropriate `src/` file.
 3. Add a `[compat]` bound in `Project.toml` for the new package.
-4. **Commit only `Project.toml`** — `Manifest.toml` is gitignored and should not be committed.
-   Other machines will regenerate their own Manifest via `Pkg.instantiate()`.
+4. **Commit only `Project.toml`** — `Manifest.toml` is gitignored.
+   Other machines regenerate their own Manifest via `Pkg.instantiate()`.

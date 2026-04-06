@@ -6,7 +6,7 @@
 Manifest.toml
 Manifest.toml.bak
 
- =========================
+# =========================
 # Editor
 # =========================
 .vscode/
@@ -18,6 +18,31 @@ Manifest.toml.bak
 *.log
 
 # =========================
+# Office / lock files
+# =========================
+*.pptx
+*.docx
+~$*
+
+# =========================
+# R session artifacts
+# =========================
+.Rhistory
+.RData
+**/.Rhistory
+**/.RData
+
+# =========================
+# Claude Code local settings
+# =========================
+.claude/
+
+# =========================
+# Personal test examples (paths specific to local machine)
+# =========================
+examples_test/
+
+# =========================
 # Data / outputs (IMPORTANT for your project)
 # =========================
 results/
@@ -25,6 +50,5 @@ output/
 *.tsv
 *.csv
 *.arrow
-
 
 InferelatorJL_TestSummary.docx
