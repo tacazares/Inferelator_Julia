@@ -12,6 +12,7 @@ include("Types.jl")                      # GeneExpressionData, mergedTFsResult, 
 
 # ── Functions ─────────────────────────────────────────────────────────────────
 include("data/GeneExpressionData.jl")    # data loading functions
+include("data/PseudobulkData.jl")        # pseudobulk aggregation, normalization, batch correction
 include("prior/MergeDegenerateTFs.jl")   # TF merging functions
 include("data/PriorTFAData.jl")          # prior processing + TFA functions
 
@@ -31,6 +32,7 @@ include("grn/PlotInstability.jl")       # ADDED: plotInstabilityCurves — λ se
 include("metrics/Constants.jl")
 include("metrics/MetricUtils.jl")
 include("metrics/CalcPR.jl")
+include("metrics/CalcR2Pred.jl")
 include("metrics/Metrics.jl")
 include("metrics/plotting/PlotSingle.jl")
 include("metrics/plotting/PlotBatch.jl")
@@ -58,9 +60,16 @@ export
     evaluateNetwork,
     inferGRN,
 
+    # Pseudobulk input preparation (pure Julia — no R dependency)
+    pseudoBulk,
+    normalizeMatrix,
+    removeBatchEffect,
+    aggregateReplicates,
+    buildDesignMatrix,
+
     # Data utilities
-    convertToLong,
-    convertToWide,
+    matrixToEdgeList,
+    edgeListToMatrix,
     frobeniusNormalize,
     completeDF,
     mergeDFs,
@@ -70,7 +79,10 @@ export
 
     # I/O
     saveData,
-    writeNetworkTable!
+    writeNetworkTable!,
+
+    # R² prediction
+    calcR2predFromStabilities
 
     # -------------------------------------------------------------------------
     # Internal pipeline functions are intentionally NOT exported.
@@ -83,7 +95,6 @@ export
     #   bstartsEstimateInstability  chooseLambda!          rankEdges!
     #   computePR             plotPRCurves                 plotAUPR
     #   loadPRData            plotInstabilityCurves
-    # -------------------------------------------------------------------------
     # -------------------------------------------------------------------------
 
 end # module InferelatorJL
