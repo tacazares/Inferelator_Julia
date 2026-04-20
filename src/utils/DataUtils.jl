@@ -4,9 +4,9 @@ using LinearAlgebra
 using TickTock
 using FileIO
 
-# Convert Wide/long data to long/wide
-function convertToLong(data)
-#dfs = [convertToLong(df) for df in dfs]
+# Convert wide matrix to edge list (long format) or edge list to wide matrix
+function matrixToEdgeList(data)
+#dfs = [matrixToEdgeList(df) for df in dfs]
     if ncol(data) > 3
         return stack(data, Not(1) )
     else
@@ -15,11 +15,11 @@ function convertToLong(data)
 end
 
     """
-    Converts a 3‑column long-format DataFrame to wide‑format using the unstack function.
+    Converts a 3‑column edge-list DataFrame to wide‑matrix format using the unstack function.
     If the input DataFrame has exactly 3 columns, the conversion is performed.
-    
-    - Data columns  is a wide matrix with columns as TF and rows as target genes or 
-            a long data with columns in the order TF, Gene, Weights.
+
+    - Data columns  is a wide matrix with columns as TF and rows as target genes or
+            an edge list with columns in the order TF, Gene, Weights.
     indices::Union{Nothing, NTuple{3, Int}} = nothing:
             A tuple specifying the column indices in the order (pivot, key, value).
                 - pivot: The column that provides the row identifier.
@@ -31,10 +31,10 @@ end
     If the DataFrame has less than 3 columns, an error is thrown.
 
     # USAGE
-    dfs = [convertToWide(df) for df in dfs]
-    dfs = [convertToWide(df; indices = (1,2,3)) for df in dfs]
+    dfs = [edgeListToMatrix(df) for df in dfs]
+    dfs = [edgeListToMatrix(df; indices = (1,2,3)) for df in dfs]
     """
-function convertToWide(Data; indices::Union{Nothing, NTuple{3, Int}}=nothing)
+function edgeListToMatrix(Data; indices::Union{Nothing, NTuple{3, Int}}=nothing)
     ncols = ncol(Data)
 
     if ncols < 3
@@ -279,8 +279,8 @@ df3 = DataFrame(Blue = ["P", "Q"], A = [13, 14], D = [15, 16], E = [17,18])
 
 # # # # List of all DataFrames you want to combine
 dfs = [df1, df2, df3]
-dfs = [convertToLong(df) for df in dfs]
-dfs = [convertToWide(df; indices = (1,2,3)) for df in dfs]
+dfs = [matrixToEdgeList(df) for df in dfs]
+dfs = [edgeListToMatrix(df; indices = (1,2,3)) for df in dfs]
 
 tick()
 dfNorm = [frobeniusNormalize1(df, :row) for df in dfs]
