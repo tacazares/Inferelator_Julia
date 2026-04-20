@@ -41,6 +41,13 @@ Manifest.toml.bak
 # Personal test examples (paths specific to local machine)
 # =========================
 examples_test/
+evaluation/R/evaluateNetworks_personal.R
+evaluation/R/evaluateNetworks1.R
+Processing/saveNormCountsArrowFIle.R
+Processing/R/Pseudobulking/Pseudobulk_workflow.R
+Processing/R/DownSamplingObject_personal.R
+Processing/R/PotentialRegulators/
+Processing/R/TargetGenes/
 
 # =========================
 # Data / outputs (IMPORTANT for your project)
