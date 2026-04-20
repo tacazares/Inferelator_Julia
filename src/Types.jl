@@ -105,6 +105,7 @@ mutable struct GrnData
     priorMatProcessed::Matrix{Float64}
     betas::Array{Float64,3}
     targGenes::Vector{String}                    # ADDED: target gene names — row index of stabilityMat (needed for per-gene plots)
+    trainInds::Vector{Int}                       # ADDED: training sample indices (excludes leave-out set); needed for R² prediction
 
     function GrnData()
         return new(
@@ -129,7 +130,8 @@ mutable struct GrnData
             Array{Float64}(undef, 0, 0, 0),      # stabilityMat (3-D)
             Matrix{Float64}(undef, 0, 0),        # priorMatProcessed
             Array{Float64,3}(undef, 0, 0, 0),   # betas
-            []                                    # targGenes
+            [],                                   # targGenes
+            Int[]                                 # trainInds
         )
     end
 end

@@ -1,22 +1,20 @@
 # =============================================================================
-#  utilityExamples.jl — Self-contained examples for InferelatorJL utility functions
+#  dataUtils.jl — Examples for InferelatorJL data utility functions
 #
 #  What:
-#    Demonstrates all exported utility functions using small synthetic datasets.
-#    No real input files are required — all data is generated inline.
+#    Demonstrates data manipulation utilities using small synthetic datasets.
+#    No real input files required — all data is generated inline.
 #    Sections:
 #      1. DataUtils         — reshape, normalize, binarize, merge prior matrices
 #      2. PartialCorrelation — precision-matrix and regression-based methods
-#      3. NetworkIO         — write edge tables and save data structs
-#      4. aggregateNetworks  — combine multiple GRN edge files into one network
 #
 #  Required inputs:  None (all data is synthetic)
 #
 #  Expected outputs: Printed results to the REPL / stdout.
-#    Sections 3 and 4 also write temporary files to tempdir().
+#    Section 1 also writes a temporary file to tempdir().
 #
 #  Usage:
-#    julia examples/utilityExamples.jl
+#    julia examples/dataUtils.jl
 #    or paste individual sections into a Julia REPL
 #
 #  Installation:
@@ -36,7 +34,7 @@ using DataFrames, CSV, Random, Statistics, LinearAlgebra
 
 println("\n===== 1. DataUtils =====\n")
 
-# ── convertToLong / convertToWide ────────────────────────────────────────────
+# ── matrixToEdgeList / edgeListToMatrix ──────────────────────────────────────
 # Wide prior matrix: genes (rows) × TFs (columns)
 widePrior = DataFrame(
     Gene = ["Gata3", "Foxp3", "Tbx21", "Rorc"],
@@ -45,14 +43,14 @@ widePrior = DataFrame(
     TF_C = [0.8, 0.0, 0.0, 0.6]
 )
 
-# Convert to long (TF, Gene, Weight)
-longPrior = convertToLong(widePrior)
-println("Wide → Long (first 5 rows):")
+# Convert wide matrix to edge list (TF, Gene, Weight)
+longPrior = matrixToEdgeList(widePrior)
+println("Wide matrix → Edge list (first 5 rows):")
 println(first(longPrior, 5))
 
-# Round-trip back to wide
-widePrior2 = convertToWide(longPrior; indices = (2, 1, 3))
-println("\nLong → Wide (restored):")
+# Round-trip back to wide matrix
+widePrior2 = edgeListToMatrix(longPrior; indices = (2, 1, 3))
+println("\nEdge list → Wide matrix (restored):")
 println(widePrior2)
 
 
@@ -110,7 +108,7 @@ println(completedPrior)
 # Write a DataFrame to TSV with the first (row-label) column header left blank.
 # This is the sparse prior format expected by processPriorFile!.
 tmpDir     = tempdir()
-sparseFile = joinpath(tmpDir, "prior_example_sp.tsv")
+sparseFile = joinpath(tmpDir, "prior_example_sp.tsv")   # _sp = long/edge list format
 writeTSVWithEmptyFirstHeader(priorBinary, sparseFile; delim = '\t')
 println("\nSparse prior written to: $sparseFile")
 println(read(sparseFile, String)[1:min(200, filesize(sparseFile))])
@@ -152,94 +150,3 @@ display(round.(Preg, digits = 3))
 
 println("\nDifference between methods (should be ~0):")
 println("Max abs diff: ", round(maximum(abs.(Pfull[2:end, 2:end] .- Preg[2:end, 2:end])), digits = 6))
-
-
-# =============================================================================
-# 3. NetworkIO
-# =============================================================================
-
-println("\n===== 3. NetworkIO =====\n")
-
-# ── writeNetworkTable! ────────────────────────────────────────────────────────
-# Populate a minimal BuildGrn with synthetic edge data and write TSV outputs.
-buildGrn = BuildGrn()
-buildGrn.regs               = ["TF_A", "TF_B", "TF_A", "TF_C"]
-buildGrn.targs              = ["Gata3", "Foxp3", "Tbx21", "Rorc"]
-buildGrn.signedQuantile     = [0.92, -0.75, 0.60, 0.85]
-buildGrn.rankings           = [0.88, 0.72, 0.55, 0.80]
-buildGrn.partialCorrelation = [0.45, -0.38, 0.30, 0.41]
-buildGrn.inPrior            = ["Yes", "Yes", "No", "Yes"]
-buildGrn.networkMat         = hcat(buildGrn.regs, buildGrn.targs,
-                                    buildGrn.signedQuantile, buildGrn.rankings,
-                                    buildGrn.partialCorrelation, buildGrn.inPrior)
-buildGrn.networkMatSubset   = buildGrn.networkMat[1:3, :]  # top 3 edges as subset
-
-netDir = joinpath(tmpDir, "network_example")
-mkpath(netDir)
-writeNetworkTable!(buildGrn; outputDir = netDir)
-println("edges.tsv written to: $netDir")
-println(read(joinpath(netDir, "edges.tsv"), String))
-
-
-# ── saveData ──────────────────────────────────────────────────────────────────
-# Save all four core structs to a .jld2 file for checkpointing.
-# Reload in a fresh session with:
-#   using InferelatorJL, JLD2
-#   @load joinpath(netDir, "checkpoint.jld2") expressionData tfaData grnData buildGrn
-#
-# (Skipped here since data/tfaData/grnData require real inputs)
-
-
-# =============================================================================
-# 4. aggregateNetworks
-# =============================================================================
-
-println("\n===== 4. aggregateNetworks =====\n")
-
-# Write two synthetic edge files (TFA and mRNA modes) then combine them.
-tfaEdges = DataFrame(
-    TF             = ["TF_A", "TF_B", "TF_C", "TF_A"],
-    Gene           = ["Gata3", "Foxp3", "Tbx21", "Rorc"],
-    signedQuantile = [0.92, -0.75, 0.60, 0.85],
-    Stability      = [0.88, 0.72, 0.55, 0.80],
-    Correlation    = [0.45, -0.38, 0.30, 0.41],
-    inPrior        = ["Yes", "Yes", "No", "Yes"]
-)
-
-mrnaEdges = DataFrame(
-    TF             = ["TF_A", "TF_B", "TF_C", "TF_D"],
-    Gene           = ["Gata3", "Foxp3", "Tbx21", "Rorc"],
-    signedQuantile = [0.80, -0.65, 0.70, 0.55],
-    Stability      = [0.75, 0.60, 0.68, 0.50],
-    Correlation    = [0.40, -0.32, 0.35, 0.28],
-    inPrior        = ["Yes", "Yes", "No", "No"]
-)
-
-tfaFile  = joinpath(tmpDir, "TFA_edges.tsv")
-mrnaFile = joinpath(tmpDir, "mRNA_edges.tsv")
-CSV.write(tfaFile,  tfaEdges;  delim = '\t')
-CSV.write(mrnaFile, mrnaEdges; delim = '\t')
-
-combDir = joinpath(tmpDir, "Combined")
-
-# Combine using max stability per (TF, Gene) pair
-combinedMax = aggregateNetworks(
-    [tfaFile, mrnaFile];
-    method              = :max,
-    meanEdgesPerGene    = 3,
-    useMeanEdgesPerGene = true,
-    outputDir           = combDir
-)
-println("Combined network (:max strategy), $(nrow(combinedMax)) edges:")
-println(combinedMax)
-
-# Combine using mean stability
-combinedMean = aggregateNetworks(
-    [tfaFile, mrnaFile];
-    method              = :mean,
-    meanEdgesPerGene    = 3,
-    useMeanEdgesPerGene = true,
-    outputDir           = combDir
-)
-println("\nCombined network (:mean strategy), $(nrow(combinedMean)) edges:")
-println(combinedMean)

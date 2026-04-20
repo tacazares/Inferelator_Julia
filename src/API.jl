@@ -201,6 +201,9 @@ Internally runs:
 - `instabilityLevel`      : "Network" (single λ) or "Gene" (per-gene λ)
 - `useMeanEdgesPerGeneMode`: Enforce per-gene edge cap (default true)
 - `zTarget`               : Z-score targets during regression (default true)
+- `leaveOutSampleList`    : Path to a text file listing samples to hold out (one per line);
+                            held-out samples are excluded from subsampling and used as the
+                            test set for R²_pred evaluation. Pass "" to use all samples.
 - `outputDir`             : Output directory for edges.tsv and stability arrays
 
 # Returns
@@ -225,10 +228,12 @@ function buildNetwork(
     instabilityLevel::String        = "Network",
     useMeanEdgesPerGeneMode::Bool   = true,
     zScoreLASSO::Bool               = true,
+    leaveOutSampleList::String      = "",
     outputDir::String               = "."
 )::BuildGrn
 
-    tfaOpt = tfaMode ? "" : "TFmRNA"
+    tfaOpt  = tfaMode ? "" : "TFmRNA"
+    loList  = isempty(leaveOutSampleList) ? nothing : leaveOutSampleList
 
     grnData = GrnData()
     preparePredictorMat!(grnData, data, priorData; tfaOpt = tfaOpt)
@@ -238,7 +243,10 @@ function buildNetwork(
                           tfaOpt             = tfaOpt)
 
     # Warm-start pass (coarse λ range)
-    constructSubsamples(data, grnData; totSS = bstarsTotSS, subsampleFrac = subsampleFrac)
+    constructSubsamples(data, grnData;
+                        totSS              = bstarsTotSS,
+                        subsampleFrac      = subsampleFrac,
+                        leaveOutSampleList = loList)
     bstarsWarmStart(data, priorData, grnData;
                     minLambda         = minLambda,
                     maxLambda         = maxLambda,
@@ -247,7 +255,10 @@ function buildNetwork(
                     zTarget           = zScoreLASSO)
 
     # Fine estimation pass
-    constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
+    constructSubsamples(data, grnData;
+                        totSS              = totSS,
+                        subsampleFrac      = subsampleFrac,
+                        leaveOutSampleList = loList)
     bstartsEstimateInstability(grnData;
                                totLambdas        = totLambdas,
                                instabilityLevel  = instabilityLevel,
@@ -405,6 +416,19 @@ Run the complete InferelatorJL pipeline end-to-end:
 
 All keyword arguments are forwarded to the relevant sub-functions.
 
+# Key keyword arguments
+- `outputDir::String = "results"` — root directory for all outputs
+- `totSS::Int = 80` — total bootstrap subsamples
+- `subsampleFrac::Float64 = 0.63` — fraction of samples per subsample
+- `lambdaBias::Vector{Float64} = [0.5]` — penalty reduction for prior edges
+- `targetInstability::Float64 = 0.05` — instability threshold for λ selection
+- `meanEdgesPerGene::Int = 20` — maximum retained edges per target gene
+- `timeLagFile::String = ""` — path to 4-column TSV for time-lag correction; `""` skips step 3b
+- `timeLag::Real = 0.0` — lag value in same time units as `timeLagFile`
+- `leaveOutSampleList::String = ""` — path to a text file (one sample name per line) listing
+  samples to exclude from subsampling; the held-out samples form the test set used by
+  `calcR2predFromStabilities` for out-of-sample R² evaluation
+
 # Returns
 `BuildGrn` from the TFA-mode network (combined results written to `outputDir`)
 """
@@ -436,7 +460,8 @@ function inferGRN(
     useMeanEdgesPerGeneMode::Bool   = true,
     combineMethod::Symbol           = :max,
     timeLagFile::String             = "",
-    timeLag::Real                   = 0.0
+    timeLag::Real                   = 0.0,
+    leaveOutSampleList::String      = ""
 )::BuildGrn
 
     mkpath(outputDir)
@@ -476,10 +501,12 @@ function inferGRN(
 
     # Step 4 — TFA mode
     tfaGrn  = buildNetwork(data, priorData; tfaMode = true,
+                            leaveOutSampleList = leaveOutSampleList,
                             netKwargs..., outputDir = tfaDir)
 
     # Step 4 — mRNA mode
     mrnaGrn = buildNetwork(data, priorData; tfaMode = false,
+                            leaveOutSampleList = leaveOutSampleList,
                             netKwargs..., outputDir = mRNADir)
 
     # Step 5 — aggregate
@@ -493,8 +520,8 @@ function inferGRN(
     )
 
     # Step 6 — refine TFA
-    combinedSparse = joinpath(combDir, "combined_" * string(combineMethod) * "_sp.tsv")
-    refineTFA(combinedSparse, data, mergedTFs;
+    combinedMatrix = joinpath(combDir, "combined_" * string(combineMethod) * ".tsv")
+    refineTFA(combinedMatrix, data, mergedTFs;
               tfaGeneFile = tfaGeneFile,
               edgeSS      = edgeSS,
               minTargets  = minTargets,

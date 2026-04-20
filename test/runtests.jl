@@ -5,6 +5,8 @@ using Random
 using Statistics
 using LinearAlgebra
 using DataFrames
+using Arrow
+
 
 # =============================================================================
 # OPTIONAL REAL DATA PATHS
@@ -161,6 +163,30 @@ end
         InferelatorJL.loadExpressionData!(data, exprFile)
         @test "1500009L16Rik" in data.geneNames
         @test length(data.geneNames) == 3
+    end
+
+    @testset "Expression matrix — Arrow format" begin
+        tmpdir  = mktempdir()
+        genes   = ["Akt1", "Bcl2", "Myc"]
+        samples = ["S1", "S2", "S3", "S4"]
+        mat = Float64[1 2 3 4; 5 6 7 8; 9 10 11 12]
+
+        # Write Arrow file: first column :Genes, then sample columns
+        df = DataFrame(:Genes => genes)
+        for (j, s) in enumerate(samples)
+            df[!, Symbol(s)] = mat[:, j]
+        end
+        arrowFile = joinpath(tmpdir, "expr.arrow")
+        Arrow.write(arrowFile, df)
+
+        data = GeneExpressionData()
+        InferelatorJL.loadExpressionData!(data, arrowFile)
+
+        @test length(data.geneNames)  == 3
+        @test length(data.cellLabels) == 4
+        @test size(data.geneExpressionMat) == (3, 4)
+        @test data.geneNames  == genes
+        @test data.cellLabels == samples
     end
 
     @testset "Expression matrix — invalid path throws" begin
@@ -412,30 +438,30 @@ end # GRN preparation
 @testset "Data utilities" begin
 # =============================================================================
 
-    @testset "convertToLong — wide → long" begin
+    @testset "matrixToEdgeList — wide matrix → edge list" begin
         df = DataFrame(Gene=["A","B"], TF1=[1.0,0.0], TF2=[0.5,1.0], TF3=[0.0,0.8])
-        long = convertToLong(df)
+        long = matrixToEdgeList(df)
         @test ncol(long) == 3                        # Gene, variable, value
         @test nrow(long) == 2 * 3                    # 2 genes × 3 TFs
     end
 
-    @testset "convertToLong — already long → unchanged" begin
+    @testset "matrixToEdgeList — already edge list → unchanged" begin
         df = DataFrame(TF=["A","A"], Gene=["X","Y"], W=[1.0,0.5])
-        @test convertToLong(df) === df
+        @test matrixToEdgeList(df) === df
     end
 
-    @testset "convertToWide — long → wide" begin
+    @testset "edgeListToMatrix — edge list → wide matrix" begin
         df = DataFrame(Gene=["X","X","Y","Y"],
                        TF=["A","B","A","B"],
                        W=[1.0,0.5,0.0,0.8])
-        wide = convertToWide(df; indices=(1,2,3))
+        wide = edgeListToMatrix(df; indices=(1,2,3))
         @test "A" in names(wide) && "B" in names(wide)
         @test nrow(wide) == 2   # X and Y
     end
 
-    @testset "convertToWide — fewer than 3 columns throws" begin
+    @testset "edgeListToMatrix — fewer than 3 columns throws" begin
         df = DataFrame(a=[1,2], b=[3,4])
-        @test_throws ErrorException convertToWide(df)
+        @test_throws ErrorException edgeListToMatrix(df)
     end
 
     @testset "frobeniusNormalize — column norms are ≈ 1 after :column" begin
@@ -866,6 +892,146 @@ end # Merge degenerate TFs
     end
 
 end # applyTimeLag
+
+
+# =============================================================================
+@testset "Pseudobulk utilities" begin
+# =============================================================================
+
+    # Shared small matrix: 4 features × 6 samples, all positive
+    Random.seed!(11)
+    pbMat = abs.(rand(Float64, 4, 6)) .* 10 .+ 1.0
+
+    @testset "normalizeMatrix — none returns identical matrix" begin
+        @test normalizeMatrix(pbMat, "none") === pbMat
+    end
+
+    @testset "normalizeMatrix — tpm: column sums ≈ 1e6" begin
+        out = normalizeMatrix(pbMat, "tpm")
+        @test size(out) == size(pbMat)
+        for j in 1:size(out, 2)
+            @test sum(out[:, j]) ≈ 1e6  atol=1e-4
+        end
+    end
+
+    @testset "normalizeMatrix — log2tpm: non-negative, larger than tpm input" begin
+        out = normalizeMatrix(pbMat, "log2tpm")
+        @test size(out) == size(pbMat)
+        @test all(out .>= 0)
+    end
+
+    @testset "normalizeMatrix — zscore: row means ≈ 0, row stds ≈ 1" begin
+        out = normalizeMatrix(pbMat, "zscore")
+        rowMeans = vec(mean(out, dims=2))
+        rowStds  = vec(std(out,  dims=2))
+        @test all(abs.(rowMeans) .< 1e-10)
+        @test all(abs.(rowStds  .- 1.0) .< 1e-10)
+    end
+
+    @testset "normalizeMatrix — log2tpm_zscore: row means ≈ 0" begin
+        out = normalizeMatrix(pbMat, "log2tpm_zscore")
+        rowMeans = vec(mean(out, dims=2))
+        @test all(abs.(rowMeans) .< 1e-10)
+    end
+
+    @testset "normalizeMatrix — log2fc: correct shape, finite, mix of signs" begin
+        out = normalizeMatrix(pbMat, "log2fc")
+        @test size(out) == size(pbMat)
+        @test all(isfinite, out)
+        # log2(x / mean(x)) produces values centred around 0 — both positive and negative
+        @test any(out .> 0)
+        @test any(out .< 0)
+    end
+
+    @testset "normalizeMatrix — sizefactor: runs and returns same shape" begin
+        out = normalizeMatrix(pbMat, "sizefactor")
+        @test size(out) == size(pbMat)
+        @test all(isfinite, out)
+    end
+
+    @testset "normalizeMatrix — vst throws with informative error" begin
+        @test_throws ErrorException normalizeMatrix(pbMat, "vst")
+    end
+
+    @testset "normalizeMatrix — unknown method throws" begin
+        @test_throws ErrorException normalizeMatrix(pbMat, "not_a_method")
+    end
+
+    @testset "buildDesignMatrix — shape and drop-first encoding" begin
+        meta = DataFrame(celltype=["A","B","A","C","B"])
+        D = buildDesignMatrix(meta, "celltype")
+
+        # n rows, k-1 columns (drop first level)
+        @test size(D) == (5, 2)
+        # first level (A) is the reference — all its rows should be zero
+        aRows = [1, 3]
+        @test all(D[aRows, :] .== 0)
+        # B rows should have a 1 in column 1
+        bRows = [2, 5]
+        @test all(D[bRows, 1] .== 1)
+    end
+
+    @testset "removeBatchEffect — batch mean removed per feature" begin
+        # 2 features, 6 samples split evenly across 2 batches
+        # Batch 2 has a constant offset of 5 added
+        nFeats, nSamps = 2, 6
+        Random.seed!(20)
+        bio = rand(Float64, nFeats, nSamps)
+        batch = ["B1","B1","B1","B2","B2","B2"]
+        offset = 5.0
+        X = hcat(bio[:, 1:3], bio[:, 4:6] .+ offset)
+
+        corrected = removeBatchEffect(X, batch)
+        @test size(corrected) == (nFeats, nSamps)
+        # After correction the two batch groups should have similar column means
+        meanB1 = mean(corrected[:, 1:3])
+        meanB2 = mean(corrected[:, 4:6])
+        @test abs(meanB1 - meanB2) < 0.5   # offset largely removed
+    end
+
+    @testset "removeBatchEffect — with designMat runs without error" begin
+        meta = DataFrame(celltype=["A","A","B","B","A","B"],
+                         batch=["B1","B1","B1","B2","B2","B2"])
+        D = buildDesignMatrix(meta, "celltype")
+        Random.seed!(21)
+        X = rand(Float64, 3, 6) .+ 2.0
+        corrected = removeBatchEffect(X, meta[!, :batch]; designMat=D)
+        @test size(corrected) == (3, 6)
+        @test all(isfinite, corrected)
+    end
+
+    @testset "aggregateReplicates — sums replicate columns per celltype" begin
+        # Two celltypes (CT1, CT2), two replicates (R1, R2)
+        features = ["GeneA", "GeneB", "GeneC"]
+        df = DataFrame(
+            :RowNames => features,
+            Symbol("CT1_R1") => [1.0, 2.0, 3.0],
+            Symbol("CT1_R2") => [4.0, 5.0, 6.0],
+            Symbol("CT2_R1") => [7.0, 8.0, 9.0],
+            Symbol("CT2_R2") => [10.0, 11.0, 12.0],
+        )
+        agg = aggregateReplicates(df, ["CT1","CT2"], ["R1","R2"])
+
+        @test nrow(agg) == 3
+        @test :CT1 in propertynames(agg)
+        @test :CT2 in propertynames(agg)
+        @test agg[1, :CT1] ≈ 5.0    # 1+4
+        @test agg[2, :CT1] ≈ 7.0    # 2+5
+        @test agg[1, :CT2] ≈ 17.0   # 7+10
+    end
+
+    @testset "aggregateReplicates — missing celltype silently skipped" begin
+        features = ["GeneA"]
+        df = DataFrame(
+            :RowNames  => features,
+            Symbol("CT1_R1") => [1.0],
+        )
+        agg = aggregateReplicates(df, ["CT1","CT_MISSING"], ["R1"])
+        @test :CT1 in propertynames(agg)
+        @test !(:CT_MISSING in propertynames(agg))
+    end
+
+end # Pseudobulk utilities
 
 
 # =============================================================================
