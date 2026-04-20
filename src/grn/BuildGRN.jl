@@ -295,6 +295,10 @@ function rankEdges!(expressionData::GeneExpressionData, tfaData::PriorTFAData, g
     allQuants = convert(Matrix{Float64}, allQuants)
     inPriorMat = convert(Matrix{Float64}, inPriorMat)
 
+    # Sync back — allStabsTest may have been rebound by hcat (merged TF expansion)
+    # and convert, so buildGrn.networkStability must be updated explicitly here.
+    buildGrn.networkStability = allStabsTest
+
     ## only keep nonzero rankings
     keepRankings = findall(x -> x != 0 && x != Inf, rankings)
     indsMerged = sortperm(rankings[keepRankings])
