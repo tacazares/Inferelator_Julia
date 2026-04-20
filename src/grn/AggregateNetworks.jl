@@ -236,12 +236,12 @@ function aggregateNetworks(nets2combine::Vector{String};
         mkpath(saveDir)
         tag = isnothing(saveName) || isempty(saveName) ? combineOpt : "$(saveName)_$(combineOpt)"
         # CSV.write(joinpath(saveDir, "$(tag)_aggregated.tsv"), aggregatedDf; delim = '\t')
-        CSV.write(joinpath(saveDir, "combined_$(tag).tsv"),   selectedDf;  delim = '\t')
+        CSV.write(joinpath(saveDir, "combined_$(tag)_sp.tsv"), selectedDf; delim = '\t')  # edge list (long, no zeros)
 
-        wideDf = convertToWide(selectedDf[ :,["TF","Gene","signedQuantile"]]; indices=(2,1,3))
+        wideDf = edgeListToMatrix(selectedDf[ :,["TF","Gene","signedQuantile"]]; indices=(2,1,3))
         wideDf = coalesce.(wideDf, 0)
-        wideFile = joinpath(saveDir, "combined_$(tag)_sp.tsv")
-        writeTSVWithEmptyFirstHeader(wideDf, wideFile; delim = '\t')
+        wideFile = joinpath(saveDir, "combined_$(tag).tsv")
+        writeTSVWithEmptyFirstHeader(wideDf, wideFile; delim = '\t')  # wide matrix (with zeros)
         @info "Files written under $saveDir"  # CHANGED: was println
     end
 
