@@ -126,7 +126,9 @@ function preparePenaltyMatrix!(expressionData::GeneExpressionData, grnData::GrnD
                                priorFilePenalties::Vector{String} = String[],
                                lambdaBias::Vector{Float64}        = [0.5],
                                tfaOpt::String                     = "")
-    #1. Update Penalty Matrix
+    # # priorWeight for a TF-Gene pair will be 1 if interaction not in prior and 1-lambdaBias if
+    # interaction is in prior. If multiple priors, take the minimum lambdaBias across all priors for that interaction.
+    # 1. Update Penalty Matrix
     # Create a dictionary to store the minimum lambda for each interaction
     minLambdaDict = Dict{Tuple{String,String}, Float64}()
     penaltyMatrix = ones(length(expressionData.targGenes),length(grnData.allPredictors))
@@ -222,120 +224,164 @@ function constructSubsamples(expressionData::GeneExpressionData, grnData::GrnDat
         subsamps[ss,:] = randSubs
     end
     subsamps = convert(Matrix{Int}, subsamps)
-    grnData.subsamps = subsamps
+    grnData.subsamps   = subsamps
+    grnData.trainInds  = collect(trainInds)   # store for R² prediction (test set = setdiff(1:totSamps, trainInds))
 end
 
-function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFAData, grnData::GrnData; minLambda = 0.01, maxLambda = 0.5, totLambdasBstars = 20, totSS = 5, targetInstability = 0.05, zTarget = false)
-    # Determine the lambda levels to test
-    lambdaRange = collect(range(minLambda, stop = maxLambda, length = totLambdasBstars))
-    #lamLog10step = 1/totLambdasBstars
-    #logLamRange =  log10(minLambda):lamLog10step:log10(maxLambda)
-    #lambdaRange = 10 .^ (logLamRange)
-    lambdaRange = reverse(lambdaRange)
+function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFAData, grnData::GrnData;
+        minLambda = 0.01, maxLambda = 0.5, totLambdasBstars = 20, totSS = 5,
+        targetInstability = 0.05, zTarget = false, extensionLimit::Int = 1)
+        
+    # Extension guard: if the target instability falls outside [minLambda, maxLambda],
+    # minLambdaNet/maxLambdaNet will be pinned at the range boundary.
+    # bstartsEstimateInstability would then build a lambda grid that never crosses
+    # targetInstability, silently producing a network that is too dense or too sparse —
+    # no error is raised. This loop detects that condition and extends the range by one
+    # order of magnitude in the direction(s) needed, up to extensionLimit times.
+    # On well-characterised datasets with established parameters this loop never fires;
+    # it exists solely as a safety net for new datasets or unusual expression distributions.
+
     totResponses = size(grnData.responseMat)[1]
 
-    instabilitiesLb = zeros(totResponses,totLambdasBstars)
-    instabilitiesUb = zeros(totResponses,totLambdasBstars)
-    minLambdas = zeros(totResponses,1)
-    maxLambdas = zeros(totResponses,1)
-
-    responsePredInds = Vector{Vector{Int}}(undef,0)
+    # Pre-compute finite-predictor indices (same for every extension iteration)
+    responsePredInds = Vector{Vector{Int}}(undef, 0)
     for res = 1:totResponses
         currWeights = grnData.penaltyMat[res,:]
-        push!(responsePredInds,findall(x -> x!=Inf, currWeights))
+        push!(responsePredInds, findall(x -> x != Inf, currWeights))
     end
-    
-    netInstabilitiesLb = zeros(totResponses, totLambdasBstars)
-    netInstabilitiesUb = zeros(totResponses, totLambdasBstars)
-    totEdges = zeros(totResponses)   # denominator for network Instabilities
 
-    theta2save = Vector{Matrix{Float64}}(undef, totResponses)  # Debugging #
+    currLambdaMin = Float64(minLambda)
+    currLambdaMax = Float64(maxLambda)
+    extended = 0
 
-    Threads.@threads for res in ProgressBar(1:totResponses) # can be a parfor loop
-        predInds = responsePredInds[res]
-        currPredNum = length(predInds)
-        penaltyFactor = grnData.penaltyMat[res, predInds]
-        totEdges[res] = currPredNum
-        ssVals = zeros(totLambdasBstars,currPredNum)
-        for ss = 1:totSS
-            subsamp = grnData.subsamps[ss,:]
-            dt = fit(ZScoreTransform, grnData.predictorMat[predInds, subsamp], dims=2)
-            currPreds = transpose(StatsBase.transform(dt, grnData.predictorMat[predInds, subsamp]))
-            if zTarget
-                dt = fit(ZScoreTransform, grnData.responseMat[res, subsamp], dims=1)
-                currResponses = StatsBase.transform(dt, grnData.responseMat[res, subsamp])
-            else
-                currResponses = grnData.responseMat[res, subsamp]
+    # Declare result variables in outer scope so they survive the loop
+    local instabilitiesLb, instabilitiesUb, minLambdas, maxLambdas
+    local netInstabilitiesLb, netInstabilitiesUb
+    local minLambdaNet, maxLambdaNet, lambdaRange
+
+    while true
+        lambdaRange = collect(range(currLambdaMin, stop = currLambdaMax, length = totLambdasBstars))
+        lambdaRange = reverse(lambdaRange)
+        # lamLog10step = 1/totLambdasBstars
+        # logLamRange =  log10(minLambda):lamLog10step:log10(maxLambda)
+        # lambdaRange = 10 .^ (logLamRange)
+
+        instabilitiesLb    = zeros(totResponses, totLambdasBstars)
+        instabilitiesUb    = zeros(totResponses, totLambdasBstars)
+        minLambdas         = zeros(totResponses, 1)
+        maxLambdas         = zeros(totResponses, 1)
+        netInstabilitiesLb = zeros(totResponses, totLambdasBstars)
+        netInstabilitiesUb = zeros(totResponses, totLambdasBstars)
+        totEdgesVec        = zeros(totResponses)   # per-gene edge counts; summed after loop
+
+        Threads.@threads for res in ProgressBar(1:totResponses)
+            predInds    = responsePredInds[res]
+            currPredNum = length(predInds)
+            penaltyFactor = grnData.penaltyMat[res, predInds]
+            totEdgesVec[res] = currPredNum
+            ssVals = zeros(totLambdasBstars, currPredNum)
+            for ss = 1:totSS
+                subsamp = grnData.subsamps[ss,:]
+                dt = fit(ZScoreTransform, grnData.predictorMat[predInds, subsamp], dims=2)
+                currPreds = transpose(StatsBase.transform(dt, grnData.predictorMat[predInds, subsamp]))
+                if zTarget
+                    dt = fit(ZScoreTransform, grnData.responseMat[res, subsamp], dims=1)
+                    currResponses = StatsBase.transform(dt, grnData.responseMat[res, subsamp])
+                else
+                    currResponses = grnData.responseMat[res, subsamp]
+                end
+                lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 1.0)
+                ssVals .+= abs.(sign.(lsoln.betas))'
             end
-            lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 1.0)
-            currBetas = lsoln.betas # flip so that the lambdas are increasing
-            # ssVals += abs.(sign.(currBetas))'
-            ssVals .+= abs.(sign.(currBetas))'
+            theta2 = (1/totSS) * ssVals   # empirical edge probability
+            instabilitiesLb[res,:] = 2 * (1/currPredNum) .* sum(theta2 .* (1 .- theta2), dims=2)  # bStARS lower bound
+            netInstabilitiesLb[res,:] = currPredNum * instabilitiesLb[res,:]
+            theta2mean = sum(theta2, dims=2) ./ currPredNum
+            instabilitiesUb[res,:] = 2 * theta2mean .* (1 .- theta2mean)                           # bStARS upper bound
+            netInstabilitiesUb[res,:] = currPredNum * instabilitiesUb[res,:]
         end
-        theta2 = (1/totSS)*ssVals # empirical edge probability
-        theta2save[res] = theta2  #For  Debugging #
-        instabilitiesLb[res,:] = 2 * (1/currPredNum) .* sum(theta2 .* (1 .- theta2), dims=2) # bStARS lower bound
-        netInstabilitiesLb[res,:] = currPredNum*(instabilitiesLb[res,:])
-        theta2mean = sum(theta2,dims=2)./currPredNum
-        instabilitiesUb[res,:] = 2 * theta2mean .* (1 .- theta2mean) # bStARS upper bound
-        netInstabilitiesUb[res,:] = currPredNum*instabilitiesUb[res,:]
+
+        totEdges = sum(totEdgesVec)
+        netInstabilitiesLb = sum(netInstabilitiesLb, dims=1)[:]
+        netInstabilitiesUb = sum(netInstabilitiesUb, dims=1)[:]
+
+        # Per-gene supremum and lambda selection
+        for res = 1:totResponses
+            # Take the supremum: set all lambdas below the instability peak equal to the peak
+            maxLb = findmax(instabilitiesLb[res,:])
+            maxLbInd = findall(x -> x == maxLb[1], instabilitiesLb[res,:])
+            instabilitiesLb[res, maxLbInd[end]:end] .= maxLb[1]
+            maxUb = findmax(instabilitiesUb[res,:])
+            maxUbInd = findall(x -> x == maxUb[1], instabilitiesUb[res,:])
+            instabilitiesUb[res, maxUbInd[end]:end] .= maxUb[1]
+            # minLambda for gene: lambda nearest targetInstability using lower bound
+            xx = findmin(abs.(instabilitiesLb[res,:] .- targetInstability))
+            minLambdas[res] = lambdaRange[xx[2][end]]
+            # maxLambda for gene: lambda nearest targetInstability using upper bound
+            xx = findmin(abs.(instabilitiesUb[res,:] .- targetInstability))
+            xx = findall(x -> x == xx[1], abs.(instabilitiesUb[res,:] .- targetInstability))
+            maxLambdas[res] = lambdaRange[xx[end]]
+        end
+
+        # Network-level supremum and lambda selection
+        netInstabilitiesUb = netInstabilitiesUb ./ totEdges
+        netInstabilitiesLb = netInstabilitiesLb ./ totEdges
+        maxLb = findmax(netInstabilitiesLb)
+        maxLbInd = findall(x -> x == maxLb[1], netInstabilitiesLb)
+        netInstabilitiesLb[maxLbInd[end]:end] .= maxLb[1]
+        maxUb = findmax(netInstabilitiesUb)
+        maxUbInd = findall(x -> x == maxUb[1], netInstabilitiesUb)
+        netInstabilitiesUb[maxUbInd[end]:end] .= maxUb[1]
+        xx = findmin(abs.(netInstabilitiesLb .- targetInstability))
+        maxInstInd = findall(x -> x == xx[1], abs.(netInstabilitiesLb .- targetInstability))
+        minLambdaNet = lambdaRange[maxInstInd[end]]
+        xx = findmin(abs.(netInstabilitiesUb .- targetInstability))
+        minInstInd = findall(x -> x == xx[1], abs.(netInstabilitiesUb .- targetInstability))
+        maxLambdaNet = lambdaRange[minInstInd[end]]
+
+        # Check whether the network bounds hit the lambda range edges, which means
+        # the target instability was not bracketed and the derived bounds are unreliable.
+        maxOutNet = (maxLambdaNet == lambdaRange[end])
+        minOutNet = (minLambdaNet == lambdaRange[1])
+
+        # Exit if bounds are valid, or if we have already reached the extension limit
+        if (!maxOutNet && !minOutNet) || extended >= extensionLimit
+            if extended > 0
+                @info "bStARS lambda range extended $extended time(s). Final range: [$currLambdaMin, $currLambdaMax]"
+            end
+            break
+        end
+
+        # Extend by one range-width in whichever direction(s) are needed.
+        # Adding the current range width (rather than multiplying by 10) keeps
+        # linear spacing coherent: on re-run ~half the points cover the original
+        # range and ~half cover the new territory, preserving resolution at the
+        # boundary where the instability transition is most likely to sit.
+        # (The original code used ×10 because it was paired with a log-spaced
+        # grid, where ×10 = +1 decade = one uniform step. With linear spacing,
+        # ×10 would place almost all points in the new region and leave the
+        # original range nearly unsampled.)
+        rangeWidth = currLambdaMax - currLambdaMin
+        if maxOutNet
+            @warn "bStARS: target instability not reached at λ_max = $currLambdaMax; extending upper bound (attempt $(extended+1)/$extensionLimit)"
+            currLambdaMax += rangeWidth
+        end
+        if minOutNet
+            @warn "bStARS: max instability not reached at λ_min = $currLambdaMin; extending lower bound (attempt $(extended+1)/$extensionLimit)"
+            currLambdaMin = max(currLambdaMin - rangeWidth, 0.0)   # lambda must stay non-negative
+        end
+        extended += 1
     end
 
-    totEdges = sum(totEdges)
-    netInstabilitiesLb = sum(netInstabilitiesLb, dims=1)[:]
-    netInstabilitiesUb = sum(netInstabilitiesUb, dims=1)[:]
-
-    for res = 1:totResponses
-        # take the supremum, find max Lambda, and set all smaller lambdas equal to that value 
-        maxLb = findmax(instabilitiesLb[res,:])
-        maxLbInd = findall(x -> x == maxLb[1], instabilitiesLb[res,:])
-        maxLb = maxLb[1]
-        instabilitiesLb[res,maxLbInd[end]:end] .= maxLb
-        maxUb = findmax(instabilitiesUb[res,:])
-        maxUbInd = findall(x -> x == maxUb[1], instabilitiesUb[res,:])
-        maxUb = maxUb[1]
-        instabilitiesUb[res,maxUbInd[end]:end] .= maxUb
-        # find the minimum lambda for the gene, based on maximum for upper bound
-        # we are less interested in high instability lambdas, so okay to use
-        # upper bound
-        xx = findmin(abs.(instabilitiesLb[res,:] .- targetInstability))
-        #xx = findall(x -> x == xx[1],abs.(instabilitiesLb[res,:] .- targetMaxInstability))
-        xx = xx[2]
-        minLambdas[res] = (lambdaRange)[xx[end]] # to the right
-        # find the lambda nearest the min instability worth considering, use
-        # upper bound as that will be sure to find an lambda >= target instability lambda 
-        xx = findmin(abs.(instabilitiesUb[res,:] .- targetInstability))
-        xx = findall(x -> x == xx[1], abs.(instabilitiesUb[res,:] .- targetInstability))
-        maxLambdas[res] = (lambdaRange)[xx[end]]  # to the right
-        # note for typical bStARS, where you know what instability cutoff you
-        # want you'd use the upperbound to find the min lambda and the lb to
-        # find the max lambda    
-    end
-
-    netInstabilitiesUb = netInstabilitiesUb ./ totEdges
-    netInstabilitiesLb = netInstabilitiesLb ./ totEdges
-    maxLb = findmax(netInstabilitiesLb)
-    maxLbInd = findall(x -> x == maxLb[1], netInstabilitiesLb)
-    netInstabilitiesLb[maxLbInd[end]:end] .= maxLb[1] # take supremum for lambdas smaller than instability max
-    maxUb = findmax(netInstabilitiesUb)
-    maxUbInd = (findall(x -> x == maxUb[1], netInstabilitiesUb))
-    netInstabilitiesUb[maxUbInd[end]:end] .= maxUb[1]
-    xx = findmin(abs.(netInstabilitiesLb .- targetInstability))
-    maxInstInd = findall(x -> x == xx[1], abs.(netInstabilitiesLb .- targetInstability))
-    minLambdaNet = (lambdaRange)[maxInstInd[end]]
-    xx = findmin(abs.(netInstabilitiesUb .- targetInstability))
-    minInstInd = findall(x -> x == xx[1], abs.(netInstabilitiesUb .- targetInstability))
-    maxLambdaNet = (lambdaRange)[minInstInd[end]]
-
-    grnData.minLambdaNet = minLambdaNet
-    grnData.maxLambdaNet = maxLambdaNet
-    grnData.maxLambdas = maxLambdas
-    grnData.minLambdas = minLambdas
+    grnData.minLambdaNet       = minLambdaNet
+    grnData.maxLambdaNet       = maxLambdaNet
+    grnData.maxLambdas         = maxLambdas
+    grnData.minLambdas         = minLambdas
     grnData.netInstabilitiesLb = netInstabilitiesLb
     grnData.netInstabilitiesUb = netInstabilitiesUb
-    grnData.instabilitiesLb = instabilitiesLb
-    grnData.instabilitiesUb = instabilitiesUb
-    grnData.lambdaRangeWarm = lambdaRange   # ADDED: store warm-start λ grid for instability bound plots
+    grnData.instabilitiesLb    = instabilitiesLb
+    grnData.instabilitiesUb    = instabilitiesUb
+    grnData.lambdaRangeWarm    = lambdaRange   # store warm-start λ grid for instability bound plots
 end
 
 function bstartsEstimateInstability(grnData::GrnData; totLambdas = 10, instabilityLevel = "Gene", zTarget = false, targetInstability::Float64 = 0.05, outputDir::Union{String, Nothing}=nothing)  # ADDED: targetInstability for λ selection diagnostic plot
