@@ -234,6 +234,8 @@
                            timeLagFile::String,
                            timeLag::Real)
 
+        isempty(timeLagFile) && return
+
         # ── 1. Parse the time-lag file ────────────────────────────────────────
         # Expected format (tab-separated, one header line):
         #   SampleQ  TimeQ  SampleP  TimeP
