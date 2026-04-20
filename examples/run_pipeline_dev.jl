@@ -160,9 +160,9 @@ function runInferelator(;
                                     outputDir           = combinedNetDir)
 
     # Step 6 — Re-estimate TFA using the consensus network as a refined prior
-    netsCombinedSparse = joinpath(combinedNetDir, "combined_" * combineOpt * "_sp.tsv")
+    netsCombinedMatrix = joinpath(combinedNetDir, "combined_" * combineOpt * ".tsv")
     InferelatorJL.refineTFA(data, mergedTFsData;
-                            priorFile    = netsCombinedSparse,
+                            priorFile    = netsCombinedMatrix,
                             tfaGeneFile  = tfaGeneFile,
                             edgeSS       = edgeSS,
                             minTargets   = minTargets,
