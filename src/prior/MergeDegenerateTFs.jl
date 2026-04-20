@@ -354,7 +354,7 @@
         end
 
         netDF.Weight = parse.(Float64, netDF.Weight)
-        mergedPrior = convertToWide(netDF; indices=(2, 1, 3))
+        mergedPrior = edgeListToMatrix(netDF; indices=(2, 1, 3))
         mergedPrior .= coalesce.(mergedPrior, 0.0)
         # write to file, while makig sure the first column is unnamed.
         writeTSVWithEmptyFirstHeader(mergedPrior, netMatOutFile; delim ='\t')
