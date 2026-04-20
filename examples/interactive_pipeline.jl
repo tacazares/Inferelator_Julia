@@ -152,7 +152,7 @@ end
 # STEP 5 — Aggregate TFA + mRNA networks into a consensus network
 # =============================================================================
 # Combines the two edge lists using max/mean/min stability per (TF, gene) pair.
-# Outputs combined_<method>.tsv and combined_<method>_sp.tsv to Combined/.
+# Outputs combined_<method>_sp.tsv (long/edge list) and combined_<method>.tsv (wide/matrix) to Combined/.
 
 combinedNetDir = joinpath(dirOut, "Combined")
 aggregateNetworks(
@@ -169,8 +169,8 @@ aggregateNetworks(
 # Uses the combined network as a new prior to re-estimate TF activity, then
 # re-runs mLASSO-StARS. Outputs go to Combined/TFA/.
 
-netsCombinedSparse = joinpath(combinedNetDir, "combined_" * combineOpt * "_sp.tsv")
-refineTFA(netsCombinedSparse, data, mergedTFs;
+netsCombinedMatrix = joinpath(combinedNetDir, "combined_" * combineOpt * ".tsv")
+refineTFA(netsCombinedMatrix, data, mergedTFs;
           tfaGeneFile = tfaGeneFile,
           edgeSS      = edgeSS,
           minTargets  = minTargets,

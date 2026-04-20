@@ -197,9 +197,9 @@ InferelatorJL.aggregateNetworks(nets2combine;
 # =============================================================================
 # Uses combined network as new prior, re-estimates TFA, re-runs mLASSO-StARS.
 
-netsCombinedSparse = joinpath(combinedNetDir, "combined_" * combineOpt * "_sp.tsv")
+netsCombinedMatrix = joinpath(combinedNetDir, "combined_" * combineOpt * ".tsv")
 InferelatorJL.refineTFA(data, mergedTFsData;
-                        priorFile    = netsCombinedSparse,
+                        priorFile    = netsCombinedMatrix,
                         tfaGeneFile  = tfaGeneFile,
                         edgeSS       = edgeSS,
                         minTargets   = minTargets,
