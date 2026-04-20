@@ -114,7 +114,7 @@ aggregated in Step 5.
 | Expression matrix | Tab-delimited TSV or Apache Arrow | Genes × samples; genes in rows, samples in columns; first column is gene names |
 | Target gene list | Plain text, one gene per line | Genes to model as regression targets |
 | Regulator list | Plain text, one TF per line | Candidate transcription factors |
-| Prior network | Sparse TSV (TF × gene, empty first header) | Prior regulatory connections; values are edge weights (binary or continuous) |
+| Prior network | Wide-matrix TSV (gene × TF, empty first header) | Prior regulatory connections; rows = target genes, columns = TFs; values are edge weights (binary or continuous) |
 | Prior penalties | Same format as prior network | Prior(s) used to set per-edge LASSO penalties; can be the same as prior network |
 | TFA gene list | Plain text, one gene per line | Optional: restrict TFA estimation to a gene subset |
 
@@ -131,8 +131,8 @@ All outputs are written under the directory specified by `outputDir`.
 | `instabOutMat.jld` | Serialised `GrnData` struct with full instability arrays across the λ grid |
 | `instability_diagnostic_network.png` | Two-panel plot: model size vs λ (left) and bStARS instability bounds vs λ (right) |
 | `instability_selection_network.png` | \|Instability − target\| vs λ with dot at the chosen λ |
-| `combined_<method>.tsv` | Aggregated network (long format) |
-| `combined_<method>_sp.tsv` | Aggregated network (sparse prior format, for downstream use) |
+| `combined_<method>_sp.tsv` | Aggregated network — long/edge list format (TF, gene, score; no zeros) |
+| `combined_<method>.tsv` | Aggregated network — wide/matrix format (genes × TFs; used as prior input to `refineTFA`) |
 
 ---
 
@@ -151,6 +151,7 @@ All outputs are written under the directory specified by `outputDir`.
 | `method` | `:max` | Network aggregation rule: `:max`, `:mean`, or `:min` stability |
 | `timeLagFile` | `""` | Path to 4-column TSV (sampleQ, timeQ, sampleP, timeP) for time-lag correction; `""` skips step 3b |
 | `timeLag` | `0.0` | Lag between TF mRNA and protein activity, in the same time units as `timeLagFile` |
+| `leaveOutSampleList` | `""` | Path to a text file (one sample name per line) listing samples to exclude from subsampling; held-out samples form the test set for `calcR2predFromStabilities` |
 
 ---
 
@@ -175,12 +176,42 @@ refineTFA(combinedNetFile, data, mergedTFs; zScoreTFA=true, outputDir=".")
 ```julia
 evaluateNetwork(networkFile, goldStandard;
                 gsRegsFile="", targGeneFile="", doPerTF=false, saveDir="")
+
+# Out-of-sample R² prediction: sweep model sizes 1:maxModSize TFs/gene,
+# fit OLS on training samples, evaluate on held-out test samples.
+# Requires a leave-out set (passed via leaveOutSampleList in buildNetwork).
+calcR2predFromStabilities(grnData, buildGrn, data, maxModSize, outputDir;
+                          xaxisStepSize=5)
 ```
+
+### Data preparation (pseudobulk)
+```julia
+# Aggregate single-cell counts from an AnnData (.h5ad) object into pseudobulk
+pbRaw = pseudoBulk(adata, "celltype_rep")   # returns features × samples DataFrame
+
+# Normalize a features × samples count matrix
+# methods: "none", "tpm", "log2tpm", "zscore", "log2tpm_zscore", "log2fc", "sizefactor"
+countsNorm = normalizeMatrix(countsMat, "log2tpm")
+
+# Build a one-hot biological covariate matrix (drop-first encoding)
+bioDesign = buildDesignMatrix(meta, "celltype")
+
+# Remove additive batch effects (pure Julia OLS, equivalent to limma)
+corrected = removeBatchEffect(countsNorm, meta[!, "replicate"]; designMat=bioDesign)
+
+# Sum replicate columns into per-celltype aggregate columns
+# Column names must follow {celltype}_{replicate} convention
+limaAgg = aggregateReplicates(limaDf, celltypeOrder, replicateOrder)
+```
+
+For DESeq2 VST normalization and exact limma batch correction, use R directly.
+See [`examples/prepareData/pseudobulkWorkflow.jl`](examples/prepareData/pseudobulkWorkflow.jl)
+for a complete workflow using RCall.jl.
 
 ### Utilities
 ```julia
-convertToLong(df)                            # wide prior matrix → long format
-convertToWide(df; indices=(2,1,3))           # long → wide
+matrixToEdgeList(df)                         # wide prior matrix → edge list (long format, no zeros)
+edgeListToMatrix(df; indices=(2,1,3))        # edge list → wide matrix
 frobeniusNormalize(M, :column)               # normalize matrix columns or rows
 binarizeNumeric!(df)                         # continuous prior → binary
 mergeDFs(dfs, :Gene, "sum")                  # merge prior DataFrames
@@ -201,8 +232,12 @@ saveData(data, tfaData, grnData, buildGrn, dir, "checkpoint.jld2")
 | [`interactive_pipeline_dev.jl`](examples/interactive_pipeline_dev.jl) | Same pipeline using module-qualified internal calls (for development/debugging) |
 | [`run_pipeline.jl`](examples/run_pipeline.jl) | Full pipeline wrapped in `runInferelator()` for batch/cluster use, public API |
 | [`run_pipeline_dev.jl`](examples/run_pipeline_dev.jl) | Same wrapped function using internal calls |
-| [`utilityExamples.jl`](examples/utilityExamples.jl) | All utility functions demonstrated with synthetic data; no input files needed |
+| [`dataUtils.jl`](examples/dataUtils.jl) | Data utility and partial-correlation functions demonstrated with synthetic data; no input files needed |
+| [`networkUtils.jl`](examples/networkUtils.jl) | Network I/O and aggregation utilities demonstrated with synthetic data; no input files needed |
 | [`plotPR.jl`](examples/plotPR.jl) | Standalone script to load saved PR results and generate PR curve plots |
+| [`prepareData/pseudobulkWorkflow.jl`](examples/prepareData/pseudobulkWorkflow.jl) | End-to-end pseudobulk workflow: h5ad → normalize → batch-correct → save TSV/Arrow for InferelatorJL |
+| [`prepareData/h5adToArrow.jl`](examples/prepareData/h5adToArrow.jl) | Convert an h5ad expression matrix directly to the Arrow format expected by InferelatorJL |
+| [`r2PredWorkflow.jl`](examples/r2PredWorkflow.jl) | Leave-out R² prediction workflow: build GRN with held-out samples, compute R²_pred vs model size to guide TF-per-gene selection |
 
 ---
 
@@ -210,11 +245,11 @@ saveData(data, tfaData, grnData, buildGrn, dir, "checkpoint.jld2")
 
 | Struct | Populated by | Key fields |
 |---|---|---|
-| `GeneExpressionData` | `loadData` | `expressionMat`, `geneNames`, `sampleNames`, `tfNames` |
-| `PriorTFAData` | `loadPrior`, `estimateTFA` | `priorMat`, `medTfas`, `tfNames`, `targetGenes` |
-| `mergedTFsResult` | `loadPrior` | `mergedTFs`, `tfNames`, `mergeTfLocVec` |
-| `GrnData` | `buildNetwork` internals | `predictorMat`, `penaltyMat`, `stabilityMat`, `subsampleMat` |
-| `BuildGrn` | `buildNetwork` | `regs`, `targs`, `signedQuantile`, `rankings`, `networkMat` |
+| `GeneExpressionData` | `loadData` | `geneExpressionMat`, `geneNames`, `cellLabels`, `targGenes`, `potRegs` |
+| `PriorTFAData` | `loadPrior`, `estimateTFA` | `priorMatrix`, `medTfas`, `pRegs`, `pTargs` |
+| `mergedTFsResult` | `loadPrior` | `mergedPrior`, `mergedTFMap` |
+| `GrnData` | `buildNetwork` internals | `predictorMat`, `penaltyMat`, `allPredictors`, `subsamps`, `trainInds`, `stabilityMat`, `targGenes` |
+| `BuildGrn` | `buildNetwork` | `networkMat`, `networkMatSubset` |
 
 ---
 
