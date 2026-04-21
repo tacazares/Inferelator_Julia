@@ -38,6 +38,7 @@
 # =============================================================================
 
 using InferelatorJL
+using Dates
 
 # =============================================================================
 # Pipeline function
@@ -70,17 +71,43 @@ function runInferelator(;
     combineOpt::String              = "max",       # "max", "mean", or "min"
     zScoreTFA::Bool                 = true,
     zScoreLASSO::Bool               = true,
-    timeLagFile::String             = "",    # ADDED: path to 4-column time-lag TSV; leave "" to skip
-    timeLag::Real                   = 0.0    # ADDED: lag value in same units as timeLagFile (e.g. hours)
+    timeLagFile::String             = "",    # path to 4-column time-lag TSV; leave "" to skip
+    timeLag::Real                   = 0.0,   # lag value in same units as timeLagFile (e.g. hours)
+    suffix::String                  = ""     # optional custom label appended to output dir, e.g. "_5KBTSS"
 )
     # Build output directory name (encodes key run parameters)
     subsamplePct    = subsampleFrac * 100
     subsampleStr    = isinteger(subsamplePct) ? string(Int(subsamplePct)) : replace(string(subsamplePct), "." => "p")
     lambdaStr       = join(replace.(string.(lambdaBias), "." => "p"), "_")
+    zTFAStr         = zScoreTFA   ? "" : "_noZscoreTFA"
+    zLASSOStr       = zScoreLASSO ? "" : "_noZscoreLASSO"
     networkBaseName = lowercase(instabilityLevel) * "Lambda" * lambdaStr * "_" * string(totSS) * "totSS_" *
-                      string(meanEdgesPerGene) * "tfsPerGene_" * "subsamplePCT" * subsampleStr
+                      string(meanEdgesPerGene) * "tfsPerGene_" * "subsamplePCT" * subsampleStr *
+                      "_" * combineOpt * zTFAStr * zLASSOStr * suffix
     dirOut = joinpath(outputDir, networkBaseName)
     mkpath(dirOut)
+
+    # Save all run parameters for reproducibility
+    open(joinpath(dirOut, "run_params.json"), "w") do io
+        write(io, """{
+  "timestamp":               "$(Dates.now())",
+  "geneExprFile":            "$(geneExprFile)",
+  "targFile":                "$(targFile)",
+  "regFile":                 "$(regFile)",
+  "priorFile":               "$(priorFile)",
+  "lambdaBias":              $(lambdaBias),
+  "totSS":                   $(totSS),
+  "bstarsTotSS":             $(bstarsTotSS),
+  "subsampleFrac":           $(subsampleFrac),
+  "targetInstability":       $(targetInstability),
+  "meanEdgesPerGene":        $(meanEdgesPerGene),
+  "instabilityLevel":        "$(instabilityLevel)",
+  "useMeanEdgesPerGeneMode": $(useMeanEdgesPerGeneMode),
+  "combineOpt":              "$(combineOpt)",
+  "zScoreTFA":               $(zScoreTFA),
+  "zScoreLASSO":             $(zScoreLASSO)
+}""")
+    end
 
     @info "Starting pipeline" outputDir=dirOut geneExprFile priorFile lambdaBias subsampleFrac
 
