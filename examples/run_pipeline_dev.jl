@@ -140,10 +140,11 @@ function runInferelator(;
                                      instabilityLevel  = instabilityLevel,
                                      targetInstability = targetInstability)
         InferelatorJL.rankEdges!(data, tfaData, grnData, buildGrn;
-                                  useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
-                                  meanEdgesPerGene        = meanEdgesPerGene,
-                                  correlationWeight       = correlationWeight,
-                                  outputDir               = instabilitiesDir)
+                                    mergedTFsData           = mergedTFsData,
+                                    useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
+                                    meanEdgesPerGene        = meanEdgesPerGene,
+                                    correlationWeight       = correlationWeight,
+                                    outputDir               = instabilitiesDir)
         writeNetworkTable!(buildGrn; outputDir = instabilitiesDir)
     end
 

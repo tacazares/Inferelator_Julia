@@ -145,6 +145,7 @@ for (tfaMode, modeLabel) in [(true, "TFA"), (false, "TFmRNA")]
                  instabilityLevel        = instabilityLevel,
                  useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
                  zScoreLASSO             = zScoreLASSO,
+                 mergedTFsData           = mergedTFs,
                  outputDir               = instabilitiesDir)
 end
 
