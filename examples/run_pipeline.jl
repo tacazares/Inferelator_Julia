@@ -123,6 +123,7 @@ function runInferelator(;
                      instabilityLevel        = instabilityLevel,
                      useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
                      zScoreLASSO             = zScoreLASSO,
+                     mergedTFsData           = mergedTFs,
                      outputDir               = instabilitiesDir)
     end
 
