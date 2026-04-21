@@ -222,7 +222,7 @@ InferelatorJL.refineTFA(data, mergedTFsData;
 outNetFiles = OrderedDict(
     "TFA"      => joinpath(dirOut, "TFA",    "edges_subset.tsv"),
     "TFmRNA"   => joinpath(dirOut, "TFmRNA", "edges_subset.tsv"),
-    "Combined" => joinpath(combinedNetDir, "combined_" * combineOpt * ".tsv")
+    "Combined" => joinpath(combinedNetDir, "combined_" * combineOpt * "_sp.tsv")
 )
 
 # Gold standard(s): name => file path
@@ -245,6 +245,7 @@ for (legendLabel, outNetFile) in outNetFiles
                         targGeneFile = targFile,
                         breakTies    = true,
                         doPerTF      = false,
+                        xLimitRecall = 0.1,
                         saveDir      = dirPR)
 
         if !haskey(prFilesByGS, gsName)
