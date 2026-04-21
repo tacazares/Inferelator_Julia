@@ -35,6 +35,7 @@
 # =============================================================================
 using Revise
 using InferelatorJL
+using Dates
 
 # =============================================================================
 # Configuration — edit these paths and parameters for your dataset
@@ -60,6 +61,7 @@ useMeanEdgesPerGeneMode = true
 combineOpt           = "max"       # "max", "mean", or "min"
 zScoreTFA            = true        # z-score targets before TFA estimation
 zScoreLASSO          = true        # z-score targets before LASSO regression
+suffix               = ""          # optional custom label appended to output dir, e.g. "_5KBTSS", "_SCENICprior"
 
 geneExprFile = "/path/to/expression.txt"         # genes × samples (.txt or .arrow)
 targFile     = "/path/to/target_genes.txt"       # one gene per line
@@ -73,10 +75,35 @@ tfaGeneFile        = ""   # optional: restrict TFA estimation to a gene subset
 subsamplePct    = subsampleFrac * 100
 subsampleStr    = isinteger(subsamplePct) ? string(Int(subsamplePct)) : replace(string(subsamplePct), "." => "p")
 lambdaStr       = join(replace.(string.(lambdaBias), "." => "p"), "_")
+zTFAStr         = zScoreTFA   ? "" : "_noZscoreTFA"
+zLASSOStr       = zScoreLASSO ? "" : "_noZscoreLASSO"
 networkBaseName = lowercase(instabilityLevel) * "Lambda" * lambdaStr * "_" * string(totSS) * "totSS_" *
-                  string(meanEdgesPerGene) * "tfsPerGene_" * "subsamplePCT" * subsampleStr
+                  string(meanEdgesPerGene) * "tfsPerGene_" * "subsamplePCT" * subsampleStr *
+                  "_" * combineOpt * zTFAStr * zLASSOStr * suffix
 dirOut = joinpath(outputDir, networkBaseName)
 mkpath(dirOut)
+
+# Save all run parameters for reproducibility
+open(joinpath(dirOut, "run_params.json"), "w") do io
+    write(io, """{
+  "timestamp":               "$(Dates.now())",
+  "geneExprFile":            "$(geneExprFile)",
+  "targFile":                "$(targFile)",
+  "regFile":                 "$(regFile)",
+  "priorFile":               "$(priorFile)",
+  "lambdaBias":              $(lambdaBias),
+  "totSS":                   $(totSS),
+  "bstarsTotSS":             $(bstarsTotSS),
+  "subsampleFrac":           $(subsampleFrac),
+  "targetInstability":       $(targetInstability),
+  "meanEdgesPerGene":        $(meanEdgesPerGene),
+  "instabilityLevel":        "$(instabilityLevel)",
+  "useMeanEdgesPerGeneMode": $(useMeanEdgesPerGeneMode),
+  "combineOpt":              "$(combineOpt)",
+  "zScoreTFA":               $(zScoreTFA),
+  "zScoreLASSO":             $(zScoreLASSO)
+}""")
+end
 
 @info "Configuration" outputDir=dirOut geneExprFile priorFile lambdaBias subsampleFrac
 
