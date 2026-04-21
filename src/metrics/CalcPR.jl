@@ -428,8 +428,8 @@ function computePR(
     end
 
     # Define gold standard edges (each as "TF,Target")
-    gsRegs = collect(row[1] for row in gsFilteredData)
-    gsTargs = collect(row[2] for row in gsFilteredData)
+    gsRegs  = String.(collect(row[1] for row in gsFilteredData))
+    gsTargs = String.(collect(row[2] for row in gsFilteredData))
     totGsInts = size(gsFilteredData)[1]
     uniGsRegs = unique(gsRegs) # unique regulators or TFs in GS
     totGsRegs = length(uniGsRegs)
