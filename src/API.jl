@@ -204,6 +204,8 @@ Internally runs:
 - `leaveOutSampleList`    : Path to a text file listing samples to hold out (one per line);
                             held-out samples are excluded from subsampling and used as the
                             test set for R²_pred evaluation. Pass "" to use all samples.
+- `mergedTFsData`         : `mergedTFsResult` returned by `loadPrior`; required for TF
+                            de-merging after regression. Pass `nothing` to skip expansion.
 - `outputDir`             : Output directory for edges.tsv and stability arrays
 
 # Returns
@@ -229,6 +231,7 @@ function buildNetwork(
     useMeanEdgesPerGeneMode::Bool   = true,
     zScoreLASSO::Bool               = true,
     leaveOutSampleList::String      = "",
+    mergedTFsData::Union{mergedTFsResult, Nothing} = nothing,
     outputDir::String               = "."
 )::BuildGrn
 
@@ -271,6 +274,7 @@ function buildNetwork(
                   instabilityLevel  = instabilityLevel,
                   targetInstability = targetInstability)
     rankEdges!(data, priorData, grnData, buildGrn;
+               mergedTFsData           = mergedTFsData,
                useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
                meanEdgesPerGene        = meanEdgesPerGene,
                correlationWeight       = correlationWeight,
@@ -502,11 +506,13 @@ function inferGRN(
     # Step 4 — TFA mode
     tfaGrn  = buildNetwork(data, priorData; tfaMode = true,
                             leaveOutSampleList = leaveOutSampleList,
+                            mergedTFsData      = mergedTFs,
                             netKwargs..., outputDir = tfaDir)
 
     # Step 4 — mRNA mode
     mrnaGrn = buildNetwork(data, priorData; tfaMode = false,
                             leaveOutSampleList = leaveOutSampleList,
+                            mergedTFsData      = mergedTFs,
                             netKwargs..., outputDir = mRNADir)
 
     # Step 5 — aggregate
