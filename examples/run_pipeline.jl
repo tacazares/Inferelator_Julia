@@ -108,7 +108,7 @@ function runInferelator(;
 }""")
     end
 
-    @info "Starting pipeline" outputDir=dirOut geneExprFile priorFile lambdaBias subsampleFrac
+    @info "Starting pipeline" outputDir=dirOut geneExprFile=geneExprFile priorFile=priorFile lambdaBias=lambdaBias subsampleFrac=subsampleFrac
 
     # Step 1 — Load and filter expression data
     data = loadData(geneExprFile, targFile, regFile;

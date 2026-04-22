@@ -105,7 +105,7 @@ open(joinpath(dirOut, "run_params.json"), "w") do io
 }""")
 end
 
-@info "Configuration" outputDir=dirOut geneExprFile priorFile lambdaBias subsampleFrac
+@info "Configuration" outputDir=dirOut geneExprFile=geneExprFile priorFile=priorFile lambdaBias=lambdaBias subsampleFrac=subsampleFrac
 
 # =============================================================================
 # STEP 1 — Load and filter expression data
