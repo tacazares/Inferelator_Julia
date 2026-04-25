@@ -38,9 +38,9 @@ import InferelatorJL: computePR, plotPRCurves, plotAUPR, loadPRData
 
 using OrderedCollections
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =========================================================
 #  USER CONFIG — edit this section
-# ══════════════════════════════════════════════════════════════════════════════
+# =========================================================
 
 # Output directory for plots
 dirOutPlot = "/path/to/plots"
@@ -66,7 +66,8 @@ gsParam = OrderedDict(
 prTargGeneFile = "/path/to/target_genes.txt"   # set to "" to use all genes
 gsRegsFile     = "/path/to/potential_regs.txt" # set to "" to use all TFs
 breakTies      = true
-auprLimit      = 0.1
+auprLimit    = 0.1   # used for computePR internals (PR curve x-axis limit)
+summaryLimit = 0.05  # used for summary table extraction (precision/enrichment)
 
 # Plot parameters
 lineTypes    = []   # e.g. ["-", "--", "-."] — one per dataset; [] uses defaults
@@ -83,9 +84,9 @@ combinePlot  = true    # generate a combined PR curve per network/GS pair
 doPerTF      = true    # compute per-TF PR metrics
 tfList       = []      # list of TF names for per-TF curves; [] skips Section 3
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =========================================================
 #  EXECUTION — no edits needed below this line
-# ══════════════════════════════════════════════════════════════════════════════
+# =========================================================
 
 mkpath(dirOutPlot)
 
@@ -97,7 +98,7 @@ function getPlotParams(i, gsName; figBaseName, yZoomPR, yStepSize)
     return saveNamePR, currentYzoomPR, currentYstepSize
 end
 
-# ── 1. Calculate PR/ROC metrics ───────────────────────────────────────────────
+# ----- 1. Calculate PR/ROC metrics -----------------------------------------------------
 @info "---- 1. Calculating Performance Metrics for the Networks -----"
 
 parts = String[]
@@ -105,7 +106,11 @@ isempty(gsRegsFile)     || push!(parts, "regs")
 isempty(prTargGeneFile) || push!(parts, "targs")
 prSuffix = isempty(parts) ? "" : "_" * join(parts, "_")
 
-prFilesByGS = OrderedDict{String, OrderedDict{String, Any}}()
+prFilesByGS      = OrderedDict{String, OrderedDict{String, Any}}()
+auprPartial      = OrderedDict{String, OrderedDict{String, Float64}}()
+auprFull         = OrderedDict{String, OrderedDict{String, Float64}}()
+precAtLimit      = OrderedDict{String, OrderedDict{String, Float64}}()
+enrichAtLimit    = OrderedDict{String, OrderedDict{String, Float64}}()
 
 for (legendLabel, outNetFile) in outNetFiles
     @info "Processing network" network=legendLabel file=outNetFile
@@ -125,12 +130,52 @@ for (legendLabel, outNetFile) in outNetFiles
                         saveDir          = dirPR)
 
         if !haskey(prFilesByGS, gsName)
-            prFilesByGS[gsName] = OrderedDict{String, Any}()
+            prFilesByGS[gsName]   = OrderedDict{String, Any}()
+            auprPartial[gsName]   = OrderedDict{String, Float64}()
+            auprFull[gsName]      = OrderedDict{String, Float64}()
+            precAtLimit[gsName]   = OrderedDict{String, Float64}()
+            enrichAtLimit[gsName] = OrderedDict{String, Float64}()
         end
-        prFilesByGS[gsName][legendLabel] = haskey(res, :savedFile) ? res[:savedFile] : res
+
+        # Precision at recall limit: last precision value where recall <= auprLimit
+        recalls    = res[:recalls]
+        precisions = res[:precisions]
+        randPR     = res[:randPR]
+        idxAtLimit = findlast(r -> r <= summaryLimit, recalls)
+        precLimit  = idxAtLimit !== nothing ? precisions[idxAtLimit] : NaN
+        enrichment = (randPR > 0 && !isnan(precLimit)) ? precLimit / randPR : NaN
+
+        prFilesByGS[gsName][legendLabel]   = haskey(res, :savedFile) ? res[:savedFile] : res
+        auprPartial[gsName][legendLabel]   = res[:auprs][:partial][:value]
+        auprFull[gsName][legendLabel]      = res[:auprs][:full]
+        precAtLimit[gsName][legendLabel]   = precLimit
+        enrichAtLimit[gsName][legendLabel] = enrichment
     end
 end
 
+# ---- Save summary tables ---------------------------
+let
+    netNames = collect(keys(outNetFiles))
+    gsNames  = collect(keys(gsParam))
+
+    tables = [
+        ("aupr_partial",   auprPartial),
+        ("aupr_full",      auprFull),
+        ("prec_at_limit_$(summaryLimit)",  precAtLimit),
+        ("enrichment_$(summaryLimit)",     enrichAtLimit),
+    ]
+
+    for (tag, dict) in tables
+        open(joinpath(dirOutPlot, "$(tag)_summary.tsv"), "w") do f
+            println(f, "network\t" * join(gsNames, "\t"))
+            for net in netNames
+                vals = [string(get(get(dict, gs, OrderedDict()), net, NaN)) for gs in gsNames]
+                println(f, net * "\t" * join(vals, "\t"))
+            end
+        end
+    end
+    @info "Summary tables saved" dir=dirOutPlot partialLimit=auprLimit metrics=["aupr_partial", "aupr_full", "prec_at_limit", "enrichment"]
+end
 
 # Example filter
 # keepKeys = ["eq1.gMax", "ge05lt1.gMax"]   # replace with the keys you want
@@ -140,7 +185,7 @@ end
 # )
 # prFilesByGS = subset
 
-# ── 2. Global PR curves ───────────────────────────────────────────────────────
+# ----- 2. Global PR curves --------------------------------------------
 @info "---- 2. Generating Global PR Curves ----"
 if combinePlot
     for (i, (gsName, listFilePR)) in enumerate(prFilesByGS)
@@ -184,7 +229,7 @@ if combinePlot
     end
 end
 
-# ── 3. Per-TF PR curves ───────────────────────────────────────────────────────
+# ----- 3. Per-TF PR curves --------------------------------------------
 if !isempty(tfList)
     @info "----- 3. Generating Per-TF PR Curves -----"
     for (i, (gsName, resultsDict)) in enumerate(prFilesByGS)
