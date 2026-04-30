@@ -32,7 +32,6 @@
 #         using Revise; using InferelatorJL
 # =============================================================================
 
-using Revise
 using InferelatorJL
 import InferelatorJL: computePR, plotPRCurves, plotAUPR, loadPRData,
                       extractMetricsAtLimit, saveSummaryTables
@@ -82,7 +81,8 @@ heightRatios = [0.5, 3.0]  # height ratios for broken y-axis panels
 isInside     = false   # legend inside the plot
 plotAUPRflag = false   # set to true to also generate AUPR bar plots
 combinePlot  = true    # generate a combined PR curve per network/GS pair
-doPerTF      = true    # compute per-TF PR metrics
+doPerTF      = true    # compute and save per-TF PR metrics to .jld
+plotPerTF    = false   # plot individual per-TF curves inside computePR — expensive with many TFs; use tfList in Section 3 instead
 tfList       = []      # list of TF names for per-TF curves; [] skips Section 3
 
 # =========================================================
@@ -129,6 +129,7 @@ for (legendLabel, outNetFile) in outNetFiles
                         breakTies        = breakTies,
                         partialAUPRlimit = auprLimit,
                         doPerTF          = doPerTF,
+                        plotPerTF        = plotPerTF,
                         saveDir          = dirPR)
 
         savedFile = res[:savedFile]
@@ -145,7 +146,7 @@ end
 # ----- 1B. Extract summary metrics at multiple recall limits ------------------
 # Fast: loads saved .jld files — re-run freely without rerunning Section 1.
 # Adjust summaryLimits in USER CONFIG and re-run only this section.
-@info "---- 1.5. Extracting Summary Metrics -----"
+@info "---- 1.B Extracting Summary Metrics -----"
 
 netNames = collect(keys(outNetFiles))
 gsNames  = collect(keys(gsParam))
@@ -243,7 +244,7 @@ if combinePlot
 end
 
 # ----- 3. Per-TF PR curves --------------------------------------------
-if !isempty(tfList)
+if !isempty(tfList) && doPerTF
     @info "----- 3. Generating Per-TF PR Curves -----"
     for (i, (gsName, resultsDict)) in enumerate(prFilesByGS)
         @info "Plotting per-TF PR curves" gs=gsName
@@ -278,6 +279,11 @@ if !isempty(tfList)
                     :randPR     => res[:randPR][idx]
                 )
             end
+        end
+
+        if isempty(tfListPR)
+            @warn "No matching TFs found in per-TF results — skipping plot" gs=gsName
+            continue
         end
 
         plotPRCurves(tfListPR, dirOutPlot, saveNamePR;
