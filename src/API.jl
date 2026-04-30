@@ -206,6 +206,13 @@ Internally runs:
                             test set for R²_pred evaluation. Pass "" to use all samples.
 - `mergedTFsData`         : `mergedTFsResult` returned by `loadPrior`; required for TF
                             de-merging after regression. Pass `nothing` to skip expansion.
+- `modelSelection`        : Lambda selection method: "bStARS" (default), "EBIC", or "bEBIC".
+                            "bStARS" uses stability-based selection (current default).
+                            "EBIC" uses a single full-data fit scored by Extended BIC.
+                            "bEBIC" uses EBIC on each subsample and takes the median lambda.
+- `gamma`                 : EBIC hyperparameter controlling the sparsity penalty (default 0.5).
+                            Only used when `modelSelection` is "EBIC" or "bEBIC".
+                            gamma=0 reduces to standard BIC; gamma=0.5 is recommended for GRN.
 - `outputDir`             : Output directory for edges.tsv and stability arrays
 
 # Returns
@@ -232,6 +239,8 @@ function buildNetwork(
     zScoreLASSO::Bool               = true,
     leaveOutSampleList::String      = "",
     mergedTFsData::Union{mergedTFsResult, Nothing} = nothing,
+    modelSelection::String          = "bStARS",
+    gamma::Float64                  = 0.5,
     outputDir::String               = "."
 )::BuildGrn
 
@@ -245,34 +254,56 @@ function buildNetwork(
                           lambdaBias         = lambdaBias,
                           tfaOpt             = tfaOpt)
 
-    # Warm-start pass (coarse λ range)
-    constructSubsamples(data, grnData;
-                        totSS              = bstarsTotSS,
-                        subsampleFrac      = subsampleFrac,
-                        leaveOutSampleList = loList)
-    bstarsWarmStart(data, priorData, grnData;
-                    minLambda         = minLambda,
-                    maxLambda         = maxLambda,
-                    totLambdasBstars  = totLambdasBstars,
-                    targetInstability = targetInstability,
-                    zTarget           = zScoreLASSO)
-
-    # Fine estimation pass
-    constructSubsamples(data, grnData;
-                        totSS              = totSS,
-                        subsampleFrac      = subsampleFrac,
-                        leaveOutSampleList = loList)
-    bstartsEstimateInstability(grnData;
-                               totLambdas        = totLambdas,
-                               instabilityLevel  = instabilityLevel,
-                               zTarget           = zScoreLASSO,
-                               targetInstability = targetInstability,   # ADDED: forward for λ selection diagnostic plot
-                               outputDir         = outputDir)
-
     buildGrn = BuildGrn()
-    chooseLambda!(grnData, buildGrn;
-                  instabilityLevel  = instabilityLevel,
-                  targetInstability = targetInstability)
+
+    if modelSelection == "bStARS"
+        # Warm-start pass (coarse lambda range)
+        constructSubsamples(data, grnData;
+                            totSS              = bstarsTotSS,
+                            subsampleFrac      = subsampleFrac,
+                            leaveOutSampleList = loList)
+        bstarsWarmStart(data, priorData, grnData;
+                        minLambda         = minLambda,
+                        maxLambda         = maxLambda,
+                        totLambdasBstars  = totLambdasBstars,
+                        targetInstability = targetInstability,
+                        zTarget           = zScoreLASSO)
+
+        # Fine estimation pass
+        constructSubsamples(data, grnData;
+                            totSS              = totSS,
+                            subsampleFrac      = subsampleFrac,
+                            leaveOutSampleList = loList)
+        bstartsEstimateInstability(grnData;
+                                   totLambdas        = totLambdas,
+                                   instabilityLevel  = instabilityLevel,
+                                   zTarget           = zScoreLASSO,
+                                   targetInstability = targetInstability,
+                                   outputDir         = outputDir)
+        chooseLambda!(grnData, buildGrn;
+                      instabilityLevel  = instabilityLevel,
+                      targetInstability = targetInstability)
+
+    elseif modelSelection == "EBIC"
+        # Single full-data fit; no subsampling needed
+        ebicSelect!(grnData, buildGrn;
+                    gamma         = gamma,
+                    zScoreLASSO   = zScoreLASSO)
+
+    elseif modelSelection == "bEBIC"
+        # Subsampled EBIC — requires subsample indices
+        constructSubsamples(data, grnData;
+                            totSS              = totSS,
+                            subsampleFrac      = subsampleFrac,
+                            leaveOutSampleList = loList)
+        bebicSelect!(grnData, buildGrn;
+                     gamma         = gamma,
+                     zScoreLASSO   = zScoreLASSO)
+
+    else
+        error("modelSelection must be \"bStARS\", \"EBIC\", or \"bEBIC\". Got: \"$modelSelection\"")
+    end
+
     rankEdges!(data, priorData, grnData, buildGrn;
                mergedTFsData           = mergedTFsData,
                useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
@@ -432,6 +463,8 @@ All keyword arguments are forwarded to the relevant sub-functions.
 - `leaveOutSampleList::String = ""` — path to a text file (one sample name per line) listing
   samples to exclude from subsampling; the held-out samples form the test set used by
   `calcR2predFromStabilities` for out-of-sample R² evaluation
+- `modelSelection::String = "bStARS"` — lambda selection method: "bStARS", "EBIC", or "bEBIC"
+- `gamma::Float64 = 0.5` — EBIC sparsity hyperparameter; only used when modelSelection != "bStARS"
 
 # Returns
 `BuildGrn` from the TFA-mode network (combined results written to `outputDir`)
@@ -465,7 +498,9 @@ function inferGRN(
     combineMethod::Symbol           = :max,
     timeLagFile::String             = "",
     timeLag::Real                   = 0.0,
-    leaveOutSampleList::String      = ""
+    leaveOutSampleList::String      = "",
+    modelSelection::String          = "bStARS",
+    gamma::Float64                  = 0.5
 )::BuildGrn
 
     mkpath(outputDir)
@@ -491,6 +526,8 @@ function inferGRN(
         instabilityLevel        = instabilityLevel,
         useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
         zScoreLASSO             = zScoreLASSO,
+        modelSelection          = modelSelection,
+        gamma                   = gamma,
     )
 
     # Steps 1–3

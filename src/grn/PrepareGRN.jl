@@ -293,7 +293,7 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
                 lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 1.0)
                 ssVals .+= abs.(sign.(lsoln.betas))'
             end
-            theta2 = (1/totSS) * ssVals   # empirical edge probability
+            theta2 = (1/totSS) * ssVals   # empirical edge probability # Fraction of times an edge was selcted
             instabilitiesLb[res,:] = 2 * (1/currPredNum) .* sum(theta2 .* (1 .- theta2), dims=2)  # bStARS lower bound
             netInstabilitiesLb[res,:] = currPredNum * instabilitiesLb[res,:]
             theta2mean = sum(theta2, dims=2) ./ currPredNum
