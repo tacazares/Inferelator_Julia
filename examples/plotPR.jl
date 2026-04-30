@@ -34,7 +34,8 @@
 
 using Revise
 using InferelatorJL
-import InferelatorJL: computePR, plotPRCurves, plotAUPR, loadPRData
+import InferelatorJL: computePR, plotPRCurves, plotAUPR, loadPRData,
+                      extractMetricsAtLimit, saveSummaryTables
 
 using OrderedCollections
 
@@ -66,8 +67,8 @@ gsParam = OrderedDict(
 prTargGeneFile = "/path/to/target_genes.txt"   # set to "" to use all genes
 gsRegsFile     = "/path/to/potential_regs.txt" # set to "" to use all TFs
 breakTies      = true
-auprLimit    = 0.1   # used for computePR internals (PR curve x-axis limit)
-summaryLimit = 0.05  # used for summary table extraction (precision/enrichment)
+auprLimit     = 0.1              # partial AUPR limit passed to computePR
+summaryLimits = [0.01, 0.05, 0.1] # recall limits for summary tables — change freely, never reruns computePR
 
 # Plot parameters
 lineTypes    = []   # e.g. ["-", "--", "-."] — one per dataset; [] uses defaults
@@ -98,7 +99,9 @@ function getPlotParams(i, gsName; figBaseName, yZoomPR, yStepSize)
     return saveNamePR, currentYzoomPR, currentYstepSize
 end
 
-# ----- 1. Calculate PR/ROC metrics -----------------------------------------------------
+# ----- 1A. Compute PR/ROC metrics and save results ------------------------------
+# Run once — results are saved to .jld files in each network's PR directory.
+# Comment out this section on subsequent runs to skip recomputation.
 @info "---- 1. Calculating Performance Metrics for the Networks -----"
 
 parts = String[]
@@ -106,11 +109,10 @@ isempty(gsRegsFile)     || push!(parts, "regs")
 isempty(prTargGeneFile) || push!(parts, "targs")
 prSuffix = isempty(parts) ? "" : "_" * join(parts, "_")
 
-prFilesByGS      = OrderedDict{String, OrderedDict{String, Any}}()
-auprPartial      = OrderedDict{String, OrderedDict{String, Float64}}()
-auprFull         = OrderedDict{String, OrderedDict{String, Float64}}()
-precAtLimit      = OrderedDict{String, OrderedDict{String, Float64}}()
-enrichAtLimit    = OrderedDict{String, OrderedDict{String, Float64}}()
+# prFilesByGS stores saved .jld file paths — required by plotPRCurves and plotAUPR.
+# To skip Section 1 on re-runs, populate manually:
+#   prFilesByGS = OrderedDict("gsName" => OrderedDict("TFA" => "/path/to/.jld", ...))
+prFilesByGS = OrderedDict{String, OrderedDict{String, String}}()
 
 for (legendLabel, outNetFile) in outNetFiles
     @info "Processing network" network=legendLabel file=outNetFile
@@ -129,53 +131,64 @@ for (legendLabel, outNetFile) in outNetFiles
                         doPerTF          = doPerTF,
                         saveDir          = dirPR)
 
-        if !haskey(prFilesByGS, gsName)
-            prFilesByGS[gsName]   = OrderedDict{String, Any}()
-            auprPartial[gsName]   = OrderedDict{String, Float64}()
-            auprFull[gsName]      = OrderedDict{String, Float64}()
-            precAtLimit[gsName]   = OrderedDict{String, Float64}()
-            enrichAtLimit[gsName] = OrderedDict{String, Float64}()
+        savedFile = res[:savedFile]
+        if savedFile === nothing
+            @warn "computePR returned no saved file — skipping" network=legendLabel gs=gsName
+            continue
         end
 
-        # Precision at recall limit: last precision value where recall <= auprLimit
-        recalls    = res[:recalls]
-        precisions = res[:precisions]
-        randPR     = res[:randPR]
-        idxAtLimit = findlast(r -> r <= summaryLimit, recalls)
-        precLimit  = idxAtLimit !== nothing ? precisions[idxAtLimit] : NaN
-        enrichment = (randPR > 0 && !isnan(precLimit)) ? precLimit / randPR : NaN
-
-        prFilesByGS[gsName][legendLabel]   = haskey(res, :savedFile) ? res[:savedFile] : res
-        auprPartial[gsName][legendLabel]   = res[:auprs][:partial][:value]
-        auprFull[gsName][legendLabel]      = res[:auprs][:full]
-        precAtLimit[gsName][legendLabel]   = precLimit
-        enrichAtLimit[gsName][legendLabel] = enrichment
+        !haskey(prFilesByGS, gsName) && (prFilesByGS[gsName] = OrderedDict{String, String}())
+        prFilesByGS[gsName][legendLabel] = savedFile
     end
 end
 
-# ---- Save summary tables ---------------------------
-let
-    netNames = collect(keys(outNetFiles))
-    gsNames  = collect(keys(gsParam))
+# ----- 1B. Extract summary metrics at multiple recall limits ------------------
+# Fast: loads saved .jld files — re-run freely without rerunning Section 1.
+# Adjust summaryLimits in USER CONFIG and re-run only this section.
+@info "---- 1.5. Extracting Summary Metrics -----"
 
-    tables = [
-        ("aupr_partial",   auprPartial),
-        ("aupr_full",      auprFull),
-        ("prec_at_limit_$(summaryLimit)",  precAtLimit),
-        ("enrichment_$(summaryLimit)",     enrichAtLimit),
-    ]
+netNames = collect(keys(outNetFiles))
+gsNames  = collect(keys(gsParam))
 
-    for (tag, dict) in tables
-        open(joinpath(dirOutPlot, "$(tag)_summary.tsv"), "w") do f
-            println(f, "network\t" * join(gsNames, "\t"))
-            for net in netNames
-                vals = [string(get(get(dict, gs, OrderedDict()), net, NaN)) for gs in gsNames]
-                println(f, net * "\t" * join(vals, "\t"))
-            end
+auprFull        = OrderedDict{String, OrderedDict{String, Float64}}()
+auprAtLimit     = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
+auprNormAtLimit = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
+precAtLimit     = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
+precNormAtLimit = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
+
+for (gsName, netDict) in prFilesByGS
+    auprFull[gsName] = OrderedDict{String, Float64}()
+    for l in summaryLimits
+        auprAtLimit[l][gsName]     = OrderedDict{String, Float64}()
+        auprNormAtLimit[l][gsName] = OrderedDict{String, Float64}()
+        precAtLimit[l][gsName]     = OrderedDict{String, Float64}()
+        precNormAtLimit[l][gsName] = OrderedDict{String, Float64}()
+    end
+
+    for (legendLabel, source) in netDict
+        # include 1.0 to get full AUPR in the same pass — single load regardless of source type
+        allM = extractMetricsAtLimit(source, vcat(summaryLimits, [1.0]))
+        auprFull[gsName][legendLabel] = allM[1.0].aupr
+
+        for l in summaryLimits
+            m = allM[l]
+            auprAtLimit[l][gsName][legendLabel]     = m.aupr
+            auprNormAtLimit[l][gsName][legendLabel] = m.auprNormalized
+            precAtLimit[l][gsName][legendLabel]     = m.precAtLimit
+            precNormAtLimit[l][gsName][legendLabel] = m.precNormalized
         end
     end
-    @info "Summary tables saved" dir=dirOutPlot partialLimit=auprLimit metrics=["aupr_partial", "aupr_full", "prec_at_limit", "enrichment"]
 end
+
+tables = [("aupr_full", auprFull)]
+for l in summaryLimits
+    push!(tables, ("aupr_partial_$(l)",    auprAtLimit[l]))
+    push!(tables, ("aupr_normalized_$(l)", auprNormAtLimit[l]))
+    push!(tables, ("prec_at_limit_$(l)",   precAtLimit[l]))
+    push!(tables, ("prec_normalized_$(l)", precNormAtLimit[l]))
+end
+
+saveSummaryTables(tables, gsNames, netNames, dirOutPlot)
 
 # Example filter
 # keepKeys = ["eq1.gMax", "ge05lt1.gMax"]   # replace with the keys you want
