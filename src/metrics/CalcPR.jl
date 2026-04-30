@@ -200,10 +200,12 @@ function evaluatePerTF(
             tfFpr = vcat(0.0, tfFpr)
         end
 
-        # -- Plot perTF metric
+        # -- Plot perTF metric (only when saveDir is provided)
         currRandPR = gsRandPRbyTf[iTF]
-        plotPRCurve(tfRec, tfPrec, currRandPR, saveDir; xLimitRecall=xLimitRecall, baseName = tf)
-        plotROCCurve(tfFpr, tfRec, saveDir; baseName = tf)
+        if saveDir !== nothing
+            plotPRCurve(tfRec, tfPrec, currRandPR, saveDir; xLimitRecall=xLimitRecall, baseName = tf)
+            plotROCCurve(tfFpr, tfRec, saveDir; baseName = tf)
+        end
 
         # Save per-TF metrics
         push!(gsPrecisionsByTf, tfPrec)
