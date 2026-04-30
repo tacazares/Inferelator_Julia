@@ -83,7 +83,13 @@ export
     writeNetworkTable!,
 
     # R² prediction
-    calcR2predFromStabilities
+    calcR2predFromStabilities,
+
+    # PR metrics
+    extractMetricsAtLimit,
+    saveSummaryTables,
+    computeAUPR,
+    computeAUROC
 
     # -------------------------------------------------------------------------
     # Internal pipeline functions are intentionally NOT exported.
