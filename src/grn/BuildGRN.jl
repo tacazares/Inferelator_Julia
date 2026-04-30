@@ -146,7 +146,14 @@ function rankEdges!(expressionData::GeneExpressionData, tfaData::PriorTFAData, g
     predictorMat = grnData.predictorMat
     allPredictors = grnData.allPredictors
 
-    totLambdas, totNetGenes, totNetTfs = size(grnData.stabilityMat)
+    # stabilityMat is populated by bStARS but not by EBIC/bEBIC — fall back to
+    # networkStability dimensions when it is empty.
+    if !isempty(grnData.stabilityMat) && ndims(grnData.stabilityMat) == 3
+        totLambdas, totNetGenes, totNetTfs = size(grnData.stabilityMat)
+    else
+        totNetGenes, totNetTfs = size(buildGrn.networkStability)
+        totLambdas = 0
+    end
     totInts = totNetGenes * totNetTfs 
     targs = repeat(expressionData.targGenes, totNetTfs, 1)
     regs = vec(repeat(permutedims(allPredictors), totNetGenes,1))

@@ -23,6 +23,7 @@ include("utils/PartialCorrelation.jl")   # Partial correlation via precision mat
 
 include("grn/PrepareGRN.jl")            # preparePredictorMat!, preparePenaltyMatrix!, constructSubsamples
 include("grn/BuildGRN.jl")              # bstarsWarmStart, bstartsEstimateInstability, chooseLambda!, rankEdges!
+include("grn/EBICSelect.jl")            # computeEBIC, ebicSelect!, bebicSelect!
 include("grn/AggregateNetworks.jl")     # combineGRNs / aggregateNetworks
 include("grn/RefineTFA.jl")             # combineGRNS2 / refineTFA
 include("grn/UtilsGRN.jl")             # GRN utility helpers
@@ -82,7 +83,13 @@ export
     writeNetworkTable!,
 
     # R² prediction
-    calcR2predFromStabilities
+    calcR2predFromStabilities,
+
+    # PR metrics
+    extractMetricsAtLimit,
+    saveSummaryTables,
+    computeAUPR,
+    computeAUROC
 
     # -------------------------------------------------------------------------
     # Internal pipeline functions are intentionally NOT exported.
@@ -93,6 +100,7 @@ export
     #   calculateTFA!         applyTimeLag!                preparePredictorMat!
     #   preparePenaltyMatrix! constructSubsamples          bstarsWarmStart
     #   bstartsEstimateInstability  chooseLambda!          rankEdges!
+    #   ebicSelect!           bebicSelect!               computeEBIC
     #   computePR             plotPRCurves                 plotAUPR
     #   loadPRData            plotInstabilityCurves
     # -------------------------------------------------------------------------

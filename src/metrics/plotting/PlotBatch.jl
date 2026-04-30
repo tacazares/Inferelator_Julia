@@ -525,13 +525,12 @@ function plotAUPR(gsParam::OrderedDict{String,<:AbstractDict}, dirOut::String;
     mkpath(dirOut)
 
     # Load AUPR values
-    function loadAupr(filePath::String, metricType::String)
+    function loadAupr(source, metricType::String)
         try
-            data  = load(filePath)
-            auprs = data["results"][:auprs]
+            auprs = source isa AbstractString ? load(source)["results"][:auprs] : source[:auprs]
             return lowercase(metricType) == "partial" ? auprs[:partial][:value] : auprs[:full]
         catch e
-            @warn "Could not load AUPR from $filePath" exception=(e, catch_backtrace())
+            @warn "Could not load AUPR" exception=(e, catch_backtrace())
             return nothing
         end
     end
@@ -543,9 +542,8 @@ function plotAUPR(gsParam::OrderedDict{String,<:AbstractDict}, dirOut::String;
     
     dfRows = Vector{NamedTuple{(:xGroups,:Network,:AUPR),Tuple{String,String,Float64}}}()
     for gs in gsNames, net in netNames
-        filePath = haskey(gsParam[gs], net) ? gsParam[gs][net] : nothing
-        # And update the caller to skip nothing values
-        auprVal = filePath === nothing ? nothing : loadAupr(filePath, metricType)
+        source  = haskey(gsParam[gs], net) ? gsParam[gs][net] : nothing
+        auprVal = source === nothing ? nothing : loadAupr(source, metricType)
         push!(dfRows, (xGroups=gs, Network=net, AUPR=something(auprVal, NaN)))  # NaN is visible in plot
         # push!(dfRows, (xGroups=gs, Network=net, AUPR=auprVal))
     end

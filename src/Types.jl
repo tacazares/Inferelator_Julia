@@ -106,6 +106,7 @@ mutable struct GrnData
     betas::Array{Float64,3}
     targGenes::Vector{String}                    # ADDED: target gene names — row index of stabilityMat (needed for per-gene plots)
     trainInds::Vector{Int}                       # ADDED: training sample indices (excludes leave-out set); needed for R² prediction
+    ebicLambdas::Vector{Float64}                 # ADDED: per-gene lambda selected by EBIC or bEBIC model selection
 
     function GrnData()
         return new(
@@ -131,7 +132,8 @@ mutable struct GrnData
             Matrix{Float64}(undef, 0, 0),        # priorMatProcessed
             Array{Float64,3}(undef, 0, 0, 0),   # betas
             [],                                   # targGenes
-            Int[]                                 # trainInds
+            Int[],                                # trainInds
+            Float64[]                             # ebicLambdas
         )
     end
 end

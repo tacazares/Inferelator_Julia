@@ -268,7 +268,7 @@ end
     computePR(
         gsFile::String, infTrnFile::String;
         gsRegsFile::Union{String, Nothing} = nothing, targGeneFile::Union{String, Nothing} = nothing,  # filtering
-        breakTies::Bool = true, partialAUPRlimit::Float64 = 0.1, doPerTF::Bool = true,                 # computation
+        breakTies::Bool = true, partialAUPRlimit::Union{Float64, Nothing} = nothing, doPerTF::Bool = true,  # computation
         xLimitRecall::Float64 = 1.0, saveDir::Union{String, Nothing} = nothing,                        # plotting
         target_points::Int = 1000, min_step::Float64 = 1e-4, step_method::Symbol = :min_gap)           # interpolation
 
@@ -320,16 +320,16 @@ results[:macroPR][:auprInterpolated] # macro AUPR
 ```
 """
 # function computePR(
-#         gsFile::String, infTrnFile::String; 
+#         gsFile::String, infTrnFile::String;
 #         gsRegsFile::Union{String, Nothing} = nothing, targGeneFile::Union{String, Nothing} = nothing,
-#         # rankColTrn::Int = 3, 
+#         # rankColTrn::Int = 3,
 #         breakTies::Bool = true, partialLimitRecall::Float64 = 0.1, doPerTF::Bool = true,
-#         saveDir::Union{String, Nothing} = nothing, target_points::Int = 1000, min_step::Float64 = 1e-4, 
+#         saveDir::Union{String, Nothing} = nothing, target_points::Int = 1000, min_step::Float64 = 1e-4,
 #         step_method::Symbol = :min_gap)
 function computePR(
         gsFile::String, infTrnFile::String;
         gsRegsFile::Union{String, Nothing} = nothing, targGeneFile::Union{String, Nothing} = nothing,  # filtering
-        breakTies::Bool = true, partialAUPRlimit::Float64 = 0.1, doPerTF::Bool = true,                 # computation
+        breakTies::Bool = true, partialAUPRlimit::Union{Float64, Nothing} = nothing, doPerTF::Bool = true,  # computation
         xLimitRecall::Float64 = 1.0, saveDir::Union{String, Nothing} = nothing,                        # plotting
         target_points::Int = 1000, min_step::Float64 = 1e-4, step_method::Symbol = :min_gap)           # interpolation
     
@@ -351,10 +351,7 @@ function computePR(
             :fprs       => Float64[],
             :auprs      => Dict(
                 :full    => 0.0,
-                :partial => Dict(
-                    :value      => 0.0,
-                    :recallLimit => partialAUPRlimit  # captured from outer scope
-                )
+                :partial => nothing
             ),
             :arocs     => 0.0,
             :f1scores  => Float64[],
@@ -534,42 +531,16 @@ function computePR(
 
     # ----- Part 7. Compute AUPR and AUROC
     @info "Computing AUPR and AUROC"
-    # Here, AUPR is computed using trapezoidal rule. Other methods available is a step-function approximation
-    heights = (gsPrecisions[2:end] + gsPrecisions[1:end-1])/2  
-    widths = gsRecalls[2:end] - gsRecalls[1:end-1]
-    gsAuprs = sum(heights .* widths)
-    #= 
-    # Step-function approximation. This works but is less robust
-    gsAuprs = 0.0
-    prev_recall = 0.0
-    for (r, p) in zip(gsRecalls, gsPrecisions)
-        delta = r - prev_recall
-        gsAuprs += delta * p
-        prev_recall = r
-    end
-    =#
+    gsAuprs = computeAUPR(gsRecalls, gsPrecisions)       # full AUPR
+    gsArocs = computeAUROC(gsFprs, gsRecalls)            # AUROC
 
-    # PARTIAL AUPR @ partialAUPRlimit
-    indx = findall(r -> r <= partialAUPRlimit, gsRecalls) # Find indices of recalls <= partialUpperLimRecall
-    recalls_sub = gsRecalls[indx]
-    precisions_sub = gsPrecisions[indx]
-    heights_sub = (precisions_sub[2:end] + precisions_sub[1:end-1]) ./ 2
-    widths_sub = recalls_sub[2:end] - recalls_sub[1:end-1]
-    partialAUPR = sum(heights_sub .* widths_sub)
-
-    # AROC : Trapezoidal Rule
-    widthsRoc = gsFprs[2:end] - gsFprs[1:end-1]    # Change in FPR (the x-axis) between successive points.
-    heightsRoc = (gsRecalls[2:end] + gsRecalls[1:end-1]) / 2  # Average TPR (recall) for each segment.
-    gsArocs = sum(widthsRoc .* heightsRoc)
-    #=
-    gsArocs = 0.0
-    prev_fpr = 0.0
-    for (f, r) in zip(fprs, recalls)
-        delta = f - prev_fpr
-        gsArocs += delta * r
-        prev_fpr = f
+    # Partial AUPR — only computed when a limit is explicitly provided
+    partialAUPRresult = if partialAUPRlimit !== nothing
+        Dict(:value => computeAUPR(gsRecalls, gsPrecisions; limit = partialAUPRlimit),
+             :recallLimit => partialAUPRlimit)
+    else
+        nothing
     end
-    =#
 
     # ----- Part 8. Save Directory
     baseName = splitext(basename(infTrnFile))[1]
@@ -627,11 +598,8 @@ function computePR(
         :fprs => gsFprs,
         # :auprs => gsAuprs,
         :auprs => Dict(
-            :full => gsAuprs,
-            :partial => Dict(
-                :value => partialAUPR,
-                :recallLimit => partialAUPRlimit
-            )
+            :full    => gsAuprs,
+            :partial => partialAUPRresult   # nothing if partialAUPRlimit not provided
         ),
         :arocs => gsArocs,
         :f1scores => gsF1scores,
@@ -650,3 +618,5 @@ function computePR(
 
     return results
 end
+
+
