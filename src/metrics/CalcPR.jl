@@ -288,6 +288,9 @@ Results are saved to a `.jld` file and PR/ROC curves are plotted automatically.
 - `partialAUPRlimit::Float64=0.1` : Maximum recall cutoff for computing partial AUPR.
 - `xLimitRecall::Float64=1.0`     : Maximum recall shown on the x-axis of diagnostic PR plots.
 - `doPerTF::Bool=true`                          : Whether to compute per-TF and macro metrics.
+- `plotPerTF::Bool=false`                       : Whether to save individual per-TF PR/ROC plots. Requires `doPerTF=true`.
+                                                  Default `false` — per-TF metrics are always saved to `.jld`; plots are
+                                                  expensive with many TFs and can be generated selectively via `plotPR.jl`.
 - `saveDir::Union{String,Nothing}=nothing`      : Directory for saving plots and results. Defaults to a timestamped folder.
 - `target_points::Int=1000`                     : Interpolation points for macro curves.
 - `min_step::Float64=1e-4`                      : Minimum step size for interpolation.
@@ -328,10 +331,10 @@ results[:macroPR][:auprInterpolated] # macro AUPR
 #         step_method::Symbol = :min_gap)
 function computePR(
         gsFile::String, infTrnFile::String;
-        gsRegsFile::Union{String, Nothing} = nothing, targGeneFile::Union{String, Nothing} = nothing,  # filtering
-        breakTies::Bool = true, partialAUPRlimit::Union{Float64, Nothing} = nothing, doPerTF::Bool = true,  # computation
-        xLimitRecall::Float64 = 1.0, saveDir::Union{String, Nothing} = nothing,                        # plotting
-        target_points::Int = 1000, min_step::Float64 = 1e-4, step_method::Symbol = :min_gap)           # interpolation
+        gsRegsFile::Union{String, Nothing} = nothing, targGeneFile::Union{String, Nothing} = nothing,   # filtering
+        breakTies::Bool = true, partialAUPRlimit::Union{Float64, Nothing} = nothing, doPerTF::Bool = true,   # computation
+        xLimitRecall::Float64 = 1.0, saveDir::Union{String, Nothing} = nothing, plotPerTF::Bool = false,     # plotting
+        target_points::Int = 1000, min_step::Float64 = 1e-4, step_method::Symbol = :min_gap)                 # interpolation
     
     # Helper function for empty/fallback PR result
     function emptyPRResult(;
@@ -559,7 +562,7 @@ function computePR(
         if !isempty(regs) && !isempty(targs) && !isempty(gsEdgesByTf)
             resultsTF = evaluatePerTF(
                 regs, targs, rankings, infEdges, gsEdgesByTf, uniGsRegs, gsRandPRbyTf;
-                saveDir,
+                saveDir    = plotPerTF ? saveDir : nothing,
                 breakTies=breakTies, target_points=target_points, min_step=min_step,
                 step_method=step_method, xLimitRecall=xLimitRecall
             )
