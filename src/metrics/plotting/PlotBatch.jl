@@ -337,7 +337,7 @@ function plotPRCurves(listFilePR, dirOut::String, saveName::String;
                     lineColors=[], # empty vector means "use default"
                     lineTypes=[], # empty vector means "use default",
                     lineWidths = [],
-                    heightRatios=[0.5, 3.0],
+                    heightRatios=nothing,
                     mode::Symbol = :global 
                     )
 
@@ -384,7 +384,7 @@ function plotPRCurves(listFilePR, dirOut::String, saveName::String;
         @info "Plotting PR curves"
         lastPlotData = nothing 
         for (idx, (legendLabel, currFilePR)) in enumerate(listFilePR)
-            @info "Plot $idx: $legendLabel" file=currFilePR
+            @info "Plot $idx: $legendLabel" source=(currFilePR isa AbstractString ? currFilePR : "<in-memory result>")
             # If lineType is provided and nonempty, then pick its element if available.
             currentLineType = (length(lineTypes) ≥ idx && lineTypes[idx] != "") ? lineTypes[idx] : nothing
             currentLineWidth = (length(lineWidths) ≥ idx &&lineWidths[idx] != "") ? lineWidths[idx] : nothing
@@ -434,7 +434,7 @@ function plotPRCurves(listFilePR, dirOut::String, saveName::String;
         lastPlotData = nothing
         @info "Plotting PR curves"
         for (idx, (legendLabel, currFilePR)) in enumerate(listFilePR)
-            @info "Plot $idx: $legendLabel; File: $currFilePR"
+            @info "Plot $idx: $legendLabel" source=(currFilePR isa AbstractString ? currFilePR : "<in-memory result>")
             # If lineType is provided and nonempty, then pick its element if available.
             currentLineType = (length(lineTypes) ≥ idx && lineTypes[idx] != "") ? lineTypes[idx] : nothing
             currentLineWidth = (length(lineWidths) ≥ idx &&lineWidths[idx] != "") ? lineWidths[idx] : nothing
