@@ -2,10 +2,11 @@
     calcR2predFromStabilities(grnData, buildGrn, expressionData, maxModSize, outputDir; xaxisStepSize=5)
 
 Estimate out-of-sample predictive performance (R²_pred) as a function of network
-model size, using stability-weighted edge selection on held-out samples.
+model size, using confidence-weighted edge selection on held-out samples.
 
-For each model size m (1 → maxModSize TFs per gene) a stability cutoff is derived
-from buildGrn.networkStability so that on average m edges per gene are retained.
+Compatible with bStARS and bEBIC model selection. For each model size m
+(1 → maxModSize TFs per gene) a confidence cutoff is derived from
+buildGrn.networkStability so that on average m edges per gene are retained.
 An OLS model is fit on the training samples (grnData.trainInds) and evaluated on
 the held-out test samples (all samples NOT in trainInds). Four metrics are reported
 at each model size:
@@ -19,17 +20,20 @@ Requires a leave-out sample set; when trainInds == 1:totSamples (no leave-out),
 the test set is empty and R²_pred cannot be computed — an error is thrown.
 
 # Arguments
-- `grnData`        : GrnData after constructSubsamples + bstartsEstimateInstability.
+- `grnData`        : GrnData after constructSubsamples + instability estimation.
                      Uses trainInds, responseMat, predictorMat, subsamps.
-- `buildGrn`       : BuildGrn after chooseLambda! + rankEdges!.
-                     Uses networkStability (targets × predictors, subsample counts).
+                     Compatible with bStARS and bEBIC (both call constructSubsamples).
+- `buildGrn`       : BuildGrn after model selection + rankEdges!.
+                     Uses networkStability:
+                       bStARS → raw subsample counts (0 to totSS)
+                       bEBIC  → selection frequencies (0 to 1) — auto-detected
 - `expressionData` : GeneExpressionData, provides cellLabels for total sample count.
 - `maxModSize`     : Maximum TFs per gene to sweep; 1:maxModSize model sizes tested.
 - `outputDir`      : Directory for r2_pred.pdf, model_size.pdf, and r2pred.jld2.
 - `xaxisStepSize`  : X-axis tick spacing for model_size.pdf (default 5).
 
 # Outputs (written to outputDir)
-- `r2_pred.pdf`    : R²_pred and R²_fit vs network instability cutoff.
+- `r2_pred.pdf`    : R²_pred and R²_fit vs selection frequency cutoff.
 - `model_size.pdf` : R²_pred vs average number of TFs per gene.
 - `r2pred.jld2`    : Saved results dict (instabRangeNet, numParams, r2_pred, …).
 """
@@ -44,11 +48,16 @@ function calcR2predFromStabilities(
     targGenes     = grnData.targGenes
     allPredictors = grnData.allPredictors
     conditionsc   = expressionData.cellLabels
-    allStabsTest  = buildGrn.networkStability      # targets × predictors, subsample counts
+    allStabsTest  = buildGrn.networkStability      # targets × predictors: counts (bStARS) or frequencies (bEBIC)
     trainInds     = grnData.trainInds
     responseMat   = grnData.responseMat
     predictorMat  = grnData.predictorMat
     totSS         = size(grnData.subsamps, 1)       # derived from stored subsample matrix
+
+    # Auto-detect confidence scale:
+    # bStARS stores raw subsample counts (0 to totSS, max > 1)
+    # bEBIC  stores selection frequencies (0 to 1, max <= 1)
+    stabNormFactor = (totSS > 0 && maximum(allStabsTest) > 1.0) ? Float64(totSS) : 1.0
 
     totPredTargs = length(targGenes)
     totConds     = length(conditionsc)
@@ -77,7 +86,7 @@ function calcR2predFromStabilities(
         currNetSize = floor(Int, totPredTargs * modSizes[ms])
         if currNetSize <= totInts
             subsampleCutoffs[ms] = stabOrd[currNetSize]
-            currTheta = subsampleCutoffs[ms] / totSS
+            currTheta = subsampleCutoffs[ms] / stabNormFactor
             instabRangeNet[ms] = 2 * currTheta * (1 - currTheta)
         end
         # if currNetSize > totInts the cutoff stays at its initialised value (Float64(ms));
@@ -186,7 +195,7 @@ function calcR2predFromStabilities(
     plot(instabRangeNet, r2_fit,    "y-",  label="Fit")
     plot(instabRangeNet, r2_predNz, "g--", label="nzPredicted")
     plot(instabRangeNet, r2_fitNz,  "r--", label="nzFit")
-    xlabel("Instability cutoff", fontsize=axis_title_size)
+    xlabel("Selection frequency cutoff", fontsize=axis_title_size)
     ylabel(L"R^2\ \left(1 - \frac{SSE_{model}}{SSE_{mean}}\right)", fontsize=axis_title_size)
     legend()
     grid(true, which="major", linestyle="--", linewidth=0.75, color="gray")

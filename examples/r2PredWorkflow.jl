@@ -53,10 +53,8 @@ modeLabels   = ["TFA", "TFmRNA"]
 
 # ── Parameters ───────────────────────────────────────────────────────────────
 
-# Note: calcR2predFromStabilities requires bStARS — it uses networkStability
-# (subsample selection counts) which is only produced by bStARS, not EBIC/bEBIC.
-# modelSelection must be "bStARS" for this workflow.
-modelSelection   = "bStARS"    # must be "bStARS" for R² evaluation
+modelSelection   = "bStARS"    # "bStARS" or "bEBIC" — both supported for R² evaluation
+                               # "EBIC" is not supported (no leave-out split, no selection frequencies)
 
 # --- Subsampling and stability
 totSS            = 80          # total bootstrap subsamples for stability estimation
