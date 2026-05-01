@@ -48,25 +48,43 @@ using Dates
 
 outputDir            = "/path/to/output"
 tfaOptions           = ["", "TFmRNA"]   # "" → TFA mode, "TFmRNA" → mRNA mode
-totSS                = 80
-bstarsTotSS          = 5
-subsampleFrac        = 0.68
-minLambda            = 0.01
-maxLambda            = 0.5
-totLambdasBstars     = 20
-totLambdas           = 40
-targetInstability    = 0.05
-meanEdgesPerGene     = 20
-correlationWeight    = 1
-minTargets           = 3
-edgeSS               = 0
-lambdaBias           = [0.5]
-instabilityLevel     = "Network"   # "Network" or "Gene"
-useMeanEdgesPerGeneMode = true
-combineOpt           = "max"       # "max", "mean", or "min"
-zScoreTFA            = true        # z-score targets before TFA estimation
-suffix               = ""          # optional custom label appended to output dir, e.g. "_5KBTSS", "_SCENICprior"
-zScoreLASSO          = true        # z-score targets before LASSO regression
+combineOpt           = "max"            # consensus aggregation method: "max", "mean", or "min" stability per edge
+suffix               = ""               # optional label appended to output dir, e.g. "_5KBTSS", "_SCENICprior"
+
+# --- Model selection
+modelSelection       = "bStARS"    # "bStARS" : stability-based (default, recommended)
+                                   # "EBIC"   : Extended BIC — fast, no subsampling required
+                                   # "bEBIC"  : bootstrap EBIC — subsampled, produces selection-frequency scores
+gamma                = 0.5         # EBIC sparsity hyperparameter: 0 = BIC, 1 = maximum penalty
+                                   # ignored when modelSelection = "bStARS"
+
+# --- Subsampling and stability (bStARS / bEBIC)
+totSS                = 80          # total bootstrap subsamples for stability estimation
+bstarsTotSS          = 5           # subsamples for warm-start lambda range search (coarser, faster)
+subsampleFrac        = 0.68        # fraction of samples per subsample (0.63–0.68 typical)
+targetInstability    = 0.05        # instability threshold for bStARS lambda selection (0.05 = 5%)
+instabilityLevel     = "Network"   # "Network": one shared lambda for all genes
+                                   # "Gene"   : per-gene lambda — slower, more flexible
+
+# --- Lambda grid
+minLambda            = 0.01        # LASSO lambda search range — lower bound
+maxLambda            = 0.5         # LASSO lambda search range — upper bound
+totLambdasBstars     = 20          # lambdas tested in warm-start phase
+totLambdas           = 40          # lambdas tested in full stability estimation
+
+# --- Network structure
+meanEdgesPerGene     = 20          # average TF regulators retained per target gene
+useMeanEdgesPerGeneMode = true     # true : keep meanEdgesPerGene × nGenes edges total
+                                   # false: keep all edges above the instability threshold
+correlationWeight    = 1           # weight of partial correlation in edge ranking; 0 = stability score only
+lambdaBias           = [0.5]       # prior penalty weight(s): 0 = ignore prior, 1 = full prior penalty
+                                   # pass multiple values e.g. [0.25, 0.5, 1.0] to sweep
+
+# --- Data processing
+minTargets           = 3           # minimum targets a TF must regulate in the prior to be retained
+edgeSS               = 0           # TFA edge subsampling replicates; 0 = no subsampling
+zScoreTFA            = true        # z-score target expression before TFA estimation
+zScoreLASSO          = true        # z-score target expression before LASSO regression
 
 geneExprFile = "/path/to/expression.txt"         # genes × samples (.txt or .arrow)
 targFile     = "/path/to/target_genes.txt"       # one gene per line
@@ -162,14 +180,14 @@ InferelatorJL.applyTimeLag!(tfaData, data, timeLagFile, timeLag)
 # =============================================================================
 # STEP 4 — Build GRN for each predictor mode
 # =============================================================================
-# Runs subsampling, warm-start lambda selection, instability estimation,
-# lambda selection, and edge ranking for each predictor mode.
+# Runs lambda selection and edge ranking for each predictor mode.
+# The lambda selection branch is controlled by modelSelection in config.
 
 for tfaOpt in tfaOptions
     instabilitiesDir = tfaOpt == "" ? joinpath(dirOut, "TFA") : joinpath(dirOut, "TFmRNA")
     mkpath(instabilitiesDir)
 
-    @info "Building network" tfaOpt=(isempty(tfaOpt) ? "TFA" : tfaOpt)
+    @info "Building network" mode=(isempty(tfaOpt) ? "TFA" : tfaOpt) modelSelection=modelSelection
 
     grnData = GrnData()
     InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = tfaOpt)
@@ -177,30 +195,51 @@ for tfaOpt in tfaOptions
                                          priorFilePenalties = priorFilePenalties,
                                          lambdaBias         = lambdaBias,
                                          tfaOpt             = tfaOpt)
-    InferelatorJL.constructSubsamples(data, grnData; totSS = bstarsTotSS, subsampleFrac = subsampleFrac)
-    InferelatorJL.bstarsWarmStart(data, tfaData, grnData;
-                                   minLambda         = minLambda,
-                                   maxLambda         = maxLambda,
-                                   totLambdasBstars  = totLambdasBstars,
-                                   targetInstability = targetInstability,
-                                   zTarget           = zScoreLASSO)
-    InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
-    InferelatorJL.bstartsEstimateInstability(grnData;
-                                              totLambdas       = totLambdas,
-                                              instabilityLevel = instabilityLevel,
-                                              zTarget          = zScoreLASSO,
-                                              outputDir        = instabilitiesDir)
-
     buildGrn = BuildGrn()
-    InferelatorJL.chooseLambda!(grnData, buildGrn;
-                                 instabilityLevel  = instabilityLevel,
-                                 targetInstability = targetInstability)
+
+    if modelSelection == "bStARS"
+        # Warm-start pass: coarse lambda range on a small number of subsamples
+        InferelatorJL.constructSubsamples(data, grnData; totSS = bstarsTotSS, subsampleFrac = subsampleFrac)
+        InferelatorJL.bstarsWarmStart(data, tfaData, grnData;
+                                       minLambda         = minLambda,
+                                       maxLambda         = maxLambda,
+                                       totLambdasBstars  = totLambdasBstars,
+                                       targetInstability = targetInstability,
+                                       zTarget           = zScoreLASSO)
+        # Full estimation pass: fine lambda grid on full subsample set
+        InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
+        InferelatorJL.bstartsEstimateInstability(grnData;
+                                                  totLambdas       = totLambdas,
+                                                  instabilityLevel = instabilityLevel,
+                                                  zTarget          = zScoreLASSO,
+                                                  outputDir        = instabilitiesDir)
+        InferelatorJL.chooseLambda!(grnData, buildGrn;
+                                     instabilityLevel  = instabilityLevel,
+                                     targetInstability = targetInstability)
+
+    elseif modelSelection == "EBIC"
+        # Single full-data LASSO fit per gene — no subsampling required
+        InferelatorJL.ebicSelect!(grnData, buildGrn;
+                                   gamma       = gamma,
+                                   zScoreLASSO = zScoreLASSO)
+
+    elseif modelSelection == "bEBIC"
+        # Subsampled EBIC — produces selection-frequency scores like bStARS
+        InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
+        InferelatorJL.bebicSelect!(grnData, buildGrn;
+                                    gamma       = gamma,
+                                    zScoreLASSO = zScoreLASSO)
+
+    else
+        error("modelSelection must be \"bStARS\", \"EBIC\", or \"bEBIC\". Got: \"$modelSelection\"")
+    end
+
     InferelatorJL.rankEdges!(data, tfaData, grnData, buildGrn;
-                            mergedTFsData = mergedTFsData,
-                            useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
-                            meanEdgesPerGene        = meanEdgesPerGene,
-                            correlationWeight       = correlationWeight,
-                            outputDir               = instabilitiesDir)
+                              mergedTFsData           = mergedTFsData,
+                              useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
+                              meanEdgesPerGene        = meanEdgesPerGene,
+                              correlationWeight       = correlationWeight,
+                              outputDir               = instabilitiesDir)
     writeNetworkTable!(buildGrn; outputDir = instabilitiesDir)
 end
 

@@ -21,6 +21,15 @@
 #    PR_withPotRegs/<gsName>/        — PR data files (if gsRegsFile is set)
 #    dirOutPlot/<figBaseName>_*.png  — PR curve plots and optional AUPR bar plots
 #
+#  In-memory vs. path storage (Section 1):
+#    By default, Section 1 stores the full computePR result dict in prFilesByGS.
+#    This avoids all disk reloads in Section 1B and plotting — most efficient for
+#    a single session.
+#    To store .jld paths instead (lower memory; reloads from disk downstream),
+#    swap the one marked line in Section 1 — see the comment there.
+#    All downstream functions (plotPRCurves, plotAUPR, extractMetricsAtLimit,
+#    loadPRData) accept both transparently.
+#
 #  Usage:
 #    julia examples/plotPR.jl
 #    or configure the USER CONFIG section and run step-by-step in the REPL
@@ -46,7 +55,7 @@ using OrderedCollections
 dirOutPlot = "/path/to/plots"
 
 # Base name for saved figures (set to "" to use gold-standard name only)
-figBaseName = "myRun"
+figBaseName = ""
 
 # Network files to compare: legend label => file path
 # Add one entry per network you want to compare
@@ -65,22 +74,27 @@ gsParam = OrderedDict(
 # Evaluation inputs
 prTargGeneFile = "/path/to/target_genes.txt"   # set to "" to use all genes
 gsRegsFile     = "/path/to/potential_regs.txt" # set to "" to use all TFs
-breakTies      = true
-auprLimit     = 0.1              # partial AUPR limit passed to computePR
-summaryLimits = [0.01, 0.05, 0.1] # recall limits for summary tables — change freely, never reruns computePR
+breakTies      = true   # true (recommended): average indicators over tied scores → smoother, order-independent curve
+                        # false: use raw binary indicators — curve depends on file sort order; use when comparing
+                        #        with tools that do not break ties, or when all scores are unique
+summaryLimits = []               # recall limits for post-hoc summary tables (Section 1B); [] skips tables
+                                 # e.g. [0.01, 0.05, 0.1] — re-run Section 1B freely without rerunning computePR
 
 # Plot parameters
 lineTypes    = []   # e.g. ["-", "--", "-."] — one per dataset; [] uses defaults
-lineWidths   = []   # per dataset; [] uses defaults
-lineColors   = []   # per dataset; [] uses defaults
-xLimitRecall = 0.1
-yStepSize    = [0.1, 0.1]  # one per gold standard
-yScaleType   = "linear"
-yZoomPR      = [[0.3, 0.9], [], []]  # one per gold standard, or []
-heightRatios = [0.5, 3.0]  # height ratios for broken y-axis panels
+lineWidths   = []   # e.g. [1.5, 1.0, 2.0] — one per dataset; [] uses defaults
+lineColors   = []   # e.g. ["#e41a1c", "steelblue"] — matplotlib color strings; [] uses default palette
+xLimitRecall = 0.1  # x-axis recall limit for plots; also used as the partial AUPR limit stored in .jld and shown in legends
+yStepSize    = [0.1, 0.1]  # y-axis tick step size, one per gold standard; e.g. [0.1, 0.2]
+yScaleType   = "linear"    # y-axis scale: "linear", "sqrt", or "cubert"
+yZoomPR      = [[0.3, 0.9], [], []]  # one entry per gold standard:
+                                    #   []         → full y-axis (0–1)
+                                    #   [0.8]      → clip y-axis to 0–0.8
+                                    #   [0.3, 0.9] → broken y-axis with gap between 0.3 and 0.9
+# heightRatios = [0.5, 3.0]          # optional: override broken-axis panel heights [top, bottom]; auto-computed from yZoomPR by default
 isInside     = false   # legend inside the plot
 plotAUPRflag = false   # set to true to also generate AUPR bar plots
-combinePlot  = true    # generate a combined PR curve per network/GS pair
+combinePlot  = true    # set to false to skip Section 2 (metrics only, no plots)
 doPerTF      = true    # compute and save per-TF PR metrics to .jld
 plotPerTF    = false   # plot individual per-TF curves inside computePR — expensive with many TFs; use tfList in Section 3 instead
 tfList       = []      # list of TF names for per-TF curves; [] skips Section 3
@@ -99,9 +113,11 @@ function getPlotParams(i, gsName; figBaseName, yZoomPR, yStepSize)
     return saveNamePR, currentYzoomPR, currentYstepSize
 end
 
-# ----- 1A. Compute PR/ROC metrics and save results ------------------------------
-# Run once — results are saved to .jld files in each network's PR directory.
-# Comment out this section on subsequent runs to skip recomputation.
+# ----- 1. Compute PR/ROC metrics and save results ------------------------------
+# Run once — results are also written to .jld files automatically by computePR.
+# To skip recomputation on re-runs, comment out this section and populate
+# prFilesByGS manually with .jld paths:
+#   prFilesByGS = OrderedDict("gsName" => OrderedDict("TFA" => "/path/to/.jld", ...))
 @info "---- 1. Calculating Performance Metrics for the Networks -----"
 
 parts = String[]
@@ -109,10 +125,10 @@ isempty(gsRegsFile)     || push!(parts, "regs")
 isempty(prTargGeneFile) || push!(parts, "targs")
 prSuffix = isempty(parts) ? "" : "_" * join(parts, "_")
 
-# prFilesByGS stores saved .jld file paths — required by plotPRCurves and plotAUPR.
-# To skip Section 1 on re-runs, populate manually:
-#   prFilesByGS = OrderedDict("gsName" => OrderedDict("TFA" => "/path/to/.jld", ...))
-prFilesByGS = OrderedDict{String, OrderedDict{String, String}}()
+# prFilesByGS holds one entry per (GS, network) pair.
+# Each value is the full in-memory result dict from computePR — fastest for downstream use.
+# To save memory and load from disk instead, swap the assignment line below (see comment).
+prFilesByGS = OrderedDict{String, OrderedDict{String, Any}}()
 
 for (legendLabel, outNetFile) in outNetFiles
     @info "Processing network" network=legendLabel file=outNetFile
@@ -127,77 +143,79 @@ for (legendLabel, outNetFile) in outNetFiles
                         gsRegsFile       = gsRegsFile,
                         targGeneFile     = prTargGeneFile,
                         breakTies        = breakTies,
-                        partialAUPRlimit = auprLimit,
+                        partialAUPRlimit = xLimitRecall,
                         doPerTF          = doPerTF,
                         plotPerTF        = plotPerTF,
                         saveDir          = dirPR)
 
-        savedFile = res[:savedFile]
-        if savedFile === nothing
+        if res[:savedFile] === nothing
             @warn "computePR returned no saved file — skipping" network=legendLabel gs=gsName
             continue
         end
 
-        !haskey(prFilesByGS, gsName) && (prFilesByGS[gsName] = OrderedDict{String, String}())
-        prFilesByGS[gsName][legendLabel] = savedFile
+        !haskey(prFilesByGS, gsName) && (prFilesByGS[gsName] = OrderedDict{String, Any}())
+
+        prFilesByGS[gsName][legendLabel] = res               # in-memory: no reloads downstream
+        # prFilesByGS[gsName][legendLabel] = res[:savedFile]  # path: lower memory, loads from disk downstream
     end
 end
 
 # ----- 1B. Extract summary metrics at multiple recall limits ------------------
-# Fast: loads saved .jld files — re-run freely without rerunning Section 1.
-# Adjust summaryLimits in USER CONFIG and re-run only this section.
-@info "---- 1.B Extracting Summary Metrics -----"
+# Fast: uses in-memory results (or loads .jld once per entry if paths were stored).
+# Re-run freely — adjust summaryLimits in USER CONFIG without rerunning Section 1.
+if !isempty(summaryLimits)
+    @info "---- 1B. Extracting Summary Metrics -----"
 
-netNames = collect(keys(outNetFiles))
-gsNames  = collect(keys(gsParam))
+    netNames = collect(keys(outNetFiles))
+    gsNames  = collect(keys(gsParam))
 
-auprFull        = OrderedDict{String, OrderedDict{String, Float64}}()
-auprAtLimit     = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
-auprNormAtLimit = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
-precAtLimit     = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
-precNormAtLimit = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
+    auprFull        = OrderedDict{String, OrderedDict{String, Float64}}()
+    auprAtLimit     = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
+    auprNormAtLimit = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
+    precAtLimit     = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
+    precNormAtLimit = Dict(l => OrderedDict{String, OrderedDict{String, Float64}}() for l in summaryLimits)
 
-for (gsName, netDict) in prFilesByGS
-    auprFull[gsName] = OrderedDict{String, Float64}()
-    for l in summaryLimits
-        auprAtLimit[l][gsName]     = OrderedDict{String, Float64}()
-        auprNormAtLimit[l][gsName] = OrderedDict{String, Float64}()
-        precAtLimit[l][gsName]     = OrderedDict{String, Float64}()
-        precNormAtLimit[l][gsName] = OrderedDict{String, Float64}()
-    end
-
-    for (legendLabel, source) in netDict
-        # include 1.0 to get full AUPR in the same pass — single load regardless of source type
-        allM = extractMetricsAtLimit(source, vcat(summaryLimits, [1.0]))
-        auprFull[gsName][legendLabel] = allM[1.0].aupr
-
+    for (gsName, netDict) in prFilesByGS
+        auprFull[gsName] = OrderedDict{String, Float64}()
         for l in summaryLimits
-            m = allM[l]
-            auprAtLimit[l][gsName][legendLabel]     = m.aupr
-            auprNormAtLimit[l][gsName][legendLabel] = m.auprNormalized
-            precAtLimit[l][gsName][legendLabel]     = m.precAtLimit
-            precNormAtLimit[l][gsName][legendLabel] = m.precNormalized
+            auprAtLimit[l][gsName]     = OrderedDict{String, Float64}()
+            auprNormAtLimit[l][gsName] = OrderedDict{String, Float64}()
+            precAtLimit[l][gsName]     = OrderedDict{String, Float64}()
+            precNormAtLimit[l][gsName] = OrderedDict{String, Float64}()
+        end
+
+        for (legendLabel, source) in netDict
+            # include 1.0 to get full AUPR in the same pass — single load regardless of source type
+            allM = extractMetricsAtLimit(source, vcat(summaryLimits, [1.0]))
+            auprFull[gsName][legendLabel] = allM[1.0].aupr
+
+            for l in summaryLimits
+                m = allM[l]
+                auprAtLimit[l][gsName][legendLabel]     = m.aupr
+                auprNormAtLimit[l][gsName][legendLabel] = m.auprNormalized
+                precAtLimit[l][gsName][legendLabel]     = m.precAtLimit
+                precNormAtLimit[l][gsName][legendLabel] = m.precNormalized
+            end
         end
     end
+
+    tables = [("aupr_full", auprFull)]
+    for l in summaryLimits
+        push!(tables, ("aupr_partial_$(l)",    auprAtLimit[l]))
+        push!(tables, ("aupr_normalized_$(l)", auprNormAtLimit[l]))
+        push!(tables, ("prec_at_limit_$(l)",   precAtLimit[l]))
+        push!(tables, ("prec_normalized_$(l)", precNormAtLimit[l]))
+    end
+
+    saveSummaryTables(tables, gsNames, netNames, joinpath(dirOutPlot, "summary"))
 end
 
-tables = [("aupr_full", auprFull)]
-for l in summaryLimits
-    push!(tables, ("aupr_partial_$(l)",    auprAtLimit[l]))
-    push!(tables, ("aupr_normalized_$(l)", auprNormAtLimit[l]))
-    push!(tables, ("prec_at_limit_$(l)",   precAtLimit[l]))
-    push!(tables, ("prec_normalized_$(l)", precNormAtLimit[l]))
-end
-
-saveSummaryTables(tables, gsNames, netNames, dirOutPlot)
-
-# Example filter
-# keepKeys = ["eq1.gMax", "ge05lt1.gMax"]   # replace with the keys you want
-# subset = OrderedDict(
+# Example filter — uncomment and adjust to restrict which networks/GSs are plotted:
+# keepKeys = ["TFA", "TFmRNA"]
+# prFilesByGS = OrderedDict(
 #     gs => OrderedDict(k => v for (k, v) in nets if k in keepKeys)
-#     for (gs, nets) in aa
+#     for (gs, nets) in prFilesByGS
 # )
-# prFilesByGS = subset
 
 # ----- 2. Global PR curves --------------------------------------------
 @info "---- 2. Generating Global PR Curves ----"
@@ -219,7 +237,7 @@ if combinePlot
                      lineColors   = lineColors,
                      lineTypes    = lineTypes,
                      lineWidths   = lineWidths,
-                     heightRatios = heightRatios,
+                     # heightRatios = heightRatios,   # uncomment + set in USER CONFIG to override auto ratio
                      mode         = :global)
 
         if plotAUPRflag
