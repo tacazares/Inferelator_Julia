@@ -34,10 +34,10 @@ using JLD2    # for load_object (reloads GrnData written by buildNetwork)
 
 # ── USER INPUTS ──────────────────────────────────────────────────────────────
 
-normGeneExprFile = "/path/to/expression.arrow"     # genes × samples (Arrow or TSV)
-targGeneFile     = "/path/to/target_genes.txt"
-potRegFile       = "/path/to/pot_regs.txt"
-priorFile        = "/path/to/prior.tsv"
+normGeneExprFile   = "/path/to/expression.arrow"   # genes × samples (Arrow or TSV)
+targGeneFile       = "/path/to/target_genes.txt"   # one gene per line
+potRegFile         = "/path/to/pot_regs.txt"       # one TF per line
+priorFile          = "/path/to/prior.tsv"
 priorFilePenalties = ["/path/to/prior.tsv"]        # same as prior or separate penalty file
 
 # Leave-out sets: each entry is [path_to_sample_list, label]
@@ -53,19 +53,30 @@ modeLabels   = ["TFA", "TFmRNA"]
 
 # ── Parameters ───────────────────────────────────────────────────────────────
 
-totSS            = 80
-bstarsTotSS      = 5
-subsampleFrac    = 0.63
-lambdaBias       = [0.5]
-targetInstability = 0.05
-lambdaMin        = 0.01
-lambdaMax        = 1.0
-totLambdasBstars = 20
-totLambdas       = 40
-meanEdgesPerGene = 20
-xaxisStepSize    = Int(meanEdgesPerGene / 4)
-correlationWeight = 1
-instabilityLevel = "Network"
+# Note: calcR2predFromStabilities requires bStARS — it uses networkStability
+# (subsample selection counts) which is only produced by bStARS, not EBIC/bEBIC.
+# modelSelection must be "bStARS" for this workflow.
+modelSelection   = "bStARS"    # must be "bStARS" for R² evaluation
+
+# --- Subsampling and stability
+totSS            = 80          # total bootstrap subsamples for stability estimation
+bstarsTotSS      = 5           # subsamples for warm-start lambda range search (coarser, faster)
+subsampleFrac    = 0.63        # fraction of samples per subsample (0.63–0.68 typical)
+targetInstability = 0.05       # instability threshold for bStARS lambda selection (0.05 = 5%)
+instabilityLevel = "Network"   # "Network": one shared lambda for all genes
+                               # "Gene"   : per-gene lambda — slower, more flexible
+
+# --- Lambda grid
+lambdaMin        = 0.01        # LASSO lambda search range — lower bound
+lambdaMax        = 1.0         # LASSO lambda search range — upper bound
+totLambdasBstars = 20          # lambdas tested in warm-start phase
+totLambdas       = 40          # lambdas tested in full stability estimation
+
+# --- Network structure
+meanEdgesPerGene = 20          # average TF regulators retained per target gene; also sets maxModSize for R²
+xaxisStepSize    = Int(meanEdgesPerGene / 4)   # x-axis tick spacing on model_size.pdf
+correlationWeight = 1          # weight of partial correlation in edge ranking; 0 = stability score only
+lambdaBias       = [0.5]       # prior penalty weight(s): 0 = ignore prior, 1 = full prior penalty
 
 # ── Steps 1–3: load data once ─────────────────────────────────────────────────
 println("Loading expression data and prior...")
@@ -104,6 +115,7 @@ for lind in 1:size(loInfo, 1)
                                 meanEdgesPerGene     = meanEdgesPerGene,
                                 correlationWeight    = correlationWeight,
                                 instabilityLevel     = instabilityLevel,
+                                modelSelection       = modelSelection,
                                 leaveOutSampleList   = leaveOutFile,
                                 outputDir            = dirOut)
 
