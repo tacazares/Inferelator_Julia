@@ -298,6 +298,7 @@ function saveSummaryTables(
     netNames::Vector{String},
     dirOut::String
 )
+    mkpath(dirOut)
     for (tag, dict) in tables
         open(joinpath(dirOut, "$(tag)_summary.tsv"), "w") do f
             println(f, "network\t" * join(gsNames, "\t"))
