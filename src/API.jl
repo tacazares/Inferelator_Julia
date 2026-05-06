@@ -191,8 +191,14 @@ Internally runs:
 - `totSS`                 : Total subsamples for fine instability estimation (default 80)
 - `bstarsTotSS`           : Subsamples for warm-start (default 5)
 - `subsampleFrac`         : Fraction of samples per subsample (default 0.63)
-- `minLambda`             : Lower bound of λ search range (default 0.01)
-- `maxLambda`             : Upper bound of λ search range (default 0.5)
+- `minLambda`             : Lower bound of λ grid.
+                            For **bStARS**: bounds of the warm-start search range (default 0.01).
+                            For **EBIC / bEBIC**: `nothing` (default) lets GLMNet choose its own
+                            solution path automatically (recommended). Pass a `Float64` to
+                            constrain the grid to a known range.
+- `maxLambda`             : Upper bound of λ grid.
+                            For **bStARS**: default 0.5.
+                            For **EBIC / bEBIC**: `nothing` (default) = auto.
 - `totLambdasBstars`      : λ grid points in warm-start pass (default 20)
 - `totLambdas`            : λ grid points in fine estimation pass (default 40)
 - `targetInstability`     : Instability threshold for λ selection (default 0.05)
@@ -227,8 +233,8 @@ function buildNetwork(
     totSS::Int                      = 80,
     bstarsTotSS::Int                = 5,
     subsampleFrac::Float64          = 0.63,
-    minLambda::Float64              = 0.01,
-    maxLambda::Float64              = 0.5,
+    minLambda::Union{Float64, Nothing} = nothing,
+    maxLambda::Union{Float64, Nothing} = nothing,
     totLambdasBstars::Int           = 20,
     totLambdas::Int                 = 40,
     targetInstability::Float64      = 0.05,
@@ -257,14 +263,18 @@ function buildNetwork(
     buildGrn = BuildGrn()
 
     if modelSelection == "bStARS"
+        # bStARS requires explicit bounds; fall back to established defaults when nothing.
+        bstarsMin = isnothing(minLambda) ? 0.01 : minLambda
+        bstarsMax = isnothing(maxLambda) ? 0.5  : maxLambda
+
         # Warm-start pass (coarse lambda range)
         constructSubsamples(data, grnData;
                             totSS              = bstarsTotSS,
                             subsampleFrac      = subsampleFrac,
                             leaveOutSampleList = loList)
         bstarsWarmStart(data, priorData, grnData;
-                        minLambda         = minLambda,
-                        maxLambda         = maxLambda,
+                        minLambda         = bstarsMin,
+                        maxLambda         = bstarsMax,
                         totLambdasBstars  = totLambdasBstars,
                         targetInstability = targetInstability,
                         zTarget           = zScoreLASSO)
@@ -280,25 +290,54 @@ function buildNetwork(
                                    zTarget           = zScoreLASSO,
                                    targetInstability = targetInstability,
                                    outputDir         = outputDir)
+        # Diagnostic plots — called here (main thread) not inside bstartsEstimateInstability
+        # to avoid PyCall GIL crash when @threads migrates the task to a worker thread.
+        # GC.gc() after the call forces Python object cleanup on the main thread before
+        # any subsequent allocation triggers GC on a worker thread.
+        if !isnothing(outputDir) && outputDir != ""
+            plotInstabilityCurves(grnData;
+                                  mode              = :network,
+                                  targetInstability = targetInstability,
+                                  outputDir         = outputDir)
+            GC.gc()
+        end
         chooseLambda!(grnData, buildGrn;
                       instabilityLevel  = instabilityLevel,
                       targetInstability = targetInstability)
 
     elseif modelSelection == "EBIC"
-        # Single full-data fit; no subsampling needed
+        # Single full-data fit; no subsampling needed.
+        # Saves per-gene chosen lambda + model size to ebic_lambda_summary.tsv.
         ebicSelect!(grnData, buildGrn;
                     gamma         = gamma,
+                    minLambda     = minLambda,
+                    maxLambda     = maxLambda,
+                    totLambdas    = totLambdas,
                     zScoreLASSO   = zScoreLASSO)
+        if !isnothing(outputDir) && outputDir != ""
+            writeEBICLambdaTable!(grnData; outputDir = outputDir)
+        end
 
     elseif modelSelection == "bEBIC"
-        # Subsampled EBIC — requires subsample indices
+        # Subsampled EBIC — requires subsample indices.
+        # Stage 1: for each gene × subsample, fit LASSO and select the EBIC-optimal
+        #          lambda. Fills grnData.lambdaSS and buildGrn.networkStability.
+        # Stage 2: aggregate per-subsample lambdas (default: median) and do one
+        #          final full-data fit per gene. Saves bebicOutMat.jld and
+        #          bebic_lambda_summary.tsv.
         constructSubsamples(data, grnData;
                             totSS              = totSS,
                             subsampleFrac      = subsampleFrac,
                             leaveOutSampleList = loList)
-        bebicSelect!(grnData, buildGrn;
-                     gamma         = gamma,
-                     zScoreLASSO   = zScoreLASSO)
+        bebicEstimateLambdas!(grnData, buildGrn;
+                              gamma       = gamma,
+                              minLambda   = minLambda,
+                              maxLambda   = maxLambda,
+                              totLambdas  = totLambdas,
+                              zScoreLASSO = zScoreLASSO)
+        bebicFinalFit!(grnData, buildGrn;
+                       zScoreLASSO = zScoreLASSO,
+                       outputDir   = outputDir)
 
     else
         error("modelSelection must be \"bStARS\", \"EBIC\", or \"bEBIC\". Got: \"$modelSelection\"")
@@ -463,6 +502,10 @@ All keyword arguments are forwarded to the relevant sub-functions.
 - `leaveOutSampleList::String = ""` — path to a text file (one sample name per line) listing
   samples to exclude from subsampling; the held-out samples form the test set used by
   `calcR2predFromStabilities` for out-of-sample R² evaluation
+- `minLambda::Union{Float64,Nothing} = nothing` — λ lower bound. For bStARS defaults to 0.01;
+  for EBIC/bEBIC `nothing` lets GLMNet choose the grid automatically (recommended).
+- `maxLambda::Union{Float64,Nothing} = nothing` — λ upper bound. For bStARS defaults to 0.5;
+  for EBIC/bEBIC `nothing` = auto.
 - `modelSelection::String = "bStARS"` — lambda selection method: "bStARS", "EBIC", or "bEBIC"
 - `gamma::Float64 = 0.5` — EBIC sparsity hyperparameter; only used when modelSelection != "bStARS"
 
@@ -486,8 +529,8 @@ function inferGRN(
     totSS::Int                      = 80,
     bstarsTotSS::Int                = 5,
     subsampleFrac::Float64          = 0.63,
-    minLambda::Float64              = 0.01,
-    maxLambda::Float64              = 0.5,
+    minLambda::Union{Float64, Nothing} = nothing,
+    maxLambda::Union{Float64, Nothing} = nothing,
     totLambdasBstars::Int           = 20,
     totLambdas::Int                 = 40,
     targetInstability::Float64      = 0.05,
