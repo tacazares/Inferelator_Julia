@@ -5,7 +5,7 @@ using ArgParse, Arrow, CSV, CategoricalArrays, Colors
 using DataFrames, Distributions, FileIO, GLMNet
 using InlineStrings, Interpolations, JLD2, Measures
 using NamedArrays, OrderedCollections, ProgressBars
-using PyPlot, Random, SparseArrays, StatsBase, TickTock
+using PyPlot, Random, SparseArrays, SpecialFunctions, StatsBase, TickTock
 
 # ── Structs (always first — all type definitions in one place) ────────────────
 include("Types.jl")                      # GeneExpressionData, mergedTFsResult, PriorTFAData, GrnData, BuildGrn
@@ -23,7 +23,7 @@ include("utils/PartialCorrelation.jl")   # Partial correlation via precision mat
 
 include("grn/PrepareGRN.jl")            # preparePredictorMat!, preparePenaltyMatrix!, constructSubsamples
 include("grn/BuildGRN.jl")              # bstarsWarmStart, bstartsEstimateInstability, chooseLambda!, rankEdges!
-include("grn/EBICSelect.jl")            # computeEBIC, ebicSelect!, bebicSelect!
+include("grn/EBICSelect.jl")            # computeEBIC, ebicSelect!, bebicEstimateLambdas!, bebicFinalFit!
 include("grn/AggregateNetworks.jl")     # combineGRNs / aggregateNetworks
 include("grn/RefineTFA.jl")             # combineGRNS2 / refineTFA
 include("grn/UtilsGRN.jl")             # GRN utility helpers
@@ -81,7 +81,8 @@ export
     # I/O
     saveData,
     writeNetworkTable!,
-
+    writeBEBICLambdaTable!,
+    writeEBICLambdaTable!,
     # R² prediction
     calcR2predFromStabilities,
 
@@ -100,7 +101,8 @@ export
     #   calculateTFA!         applyTimeLag!                preparePredictorMat!
     #   preparePenaltyMatrix! constructSubsamples          bstarsWarmStart
     #   bstartsEstimateInstability  chooseLambda!          rankEdges!
-    #   ebicSelect!           bebicSelect!               computeEBIC
+    #   ebicSelect!           bebicEstimateLambdas!        bebicFinalFit!
+    #   computeEBIC
     #   computePR             plotPRCurves                 plotAUPR
     #   loadPRData            plotInstabilityCurves
     # -------------------------------------------------------------------------
