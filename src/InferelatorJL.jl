@@ -5,7 +5,7 @@ using ArgParse, Arrow, CSV, CategoricalArrays, Colors
 using DataFrames, Distributions, FileIO, GLMNet
 using InlineStrings, Interpolations, JLD2, Measures
 using NamedArrays, OrderedCollections, ProgressBars
-using PyPlot, Random, SparseArrays, StatsBase, TickTock
+using PyPlot, Random, SparseArrays, SpecialFunctions, StatsBase, TickTock
 
 # ── Structs (always first — all type definitions in one place) ────────────────
 include("Types.jl")                      # GeneExpressionData, mergedTFsResult, PriorTFAData, GrnData, BuildGrn
