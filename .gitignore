@@ -43,6 +43,7 @@ Manifest.toml.bak
 examples_test/
 evaluation/R/evaluateNetworks_personal.R
 evaluation/R/evaluateNetworks1.R
+evaluation/R/fractionActivating.R
 Processing/saveNormCountsArrowFIle.R
 Processing/R/Pseudobulking/Pseudobulk_workflow.R
 Processing/R/DownSamplingObject_personal.R
@@ -59,3 +60,5 @@ output/
 *.arrow
 
 InferelatorJL_TestSummary.docx
+
+test/runtests_old.jl
