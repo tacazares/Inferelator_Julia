@@ -258,6 +258,7 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
     local instabilitiesLb, instabilitiesUb, minLambdas, maxLambdas
     local netInstabilitiesLb, netInstabilitiesUb
     local minLambdaNet, maxLambdaNet, lambdaRange
+    local warmModelSizeMat
 
     while true
         lambdaRange = collect(range(currLambdaMin, stop = currLambdaMax, length = totLambdasBstars))
@@ -273,6 +274,8 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
         netInstabilitiesLb = zeros(totResponses, totLambdasBstars)
         netInstabilitiesUb = zeros(totResponses, totLambdasBstars)
         totEdgesVec        = zeros(totResponses)   # per-gene edge counts; summed after loop
+        # row = gene, col = warm-start λ; each thread writes its own row → no lock needed
+        warmModelSizeMat   = zeros(Int, totResponses, totLambdasBstars)
 
         Threads.@threads for res in ProgressBar(1:totResponses)
             predInds    = responsePredInds[res]
@@ -299,6 +302,8 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
             theta2mean = sum(theta2, dims=2) ./ currPredNum
             instabilitiesUb[res,:] = 2 * theta2mean .* (1 .- theta2mean)                           # bStARS upper bound
             netInstabilitiesUb[res,:] = currPredNum * instabilitiesUb[res,:]
+            # number of predictors selected in ≥1 subsample at each warm-start λ
+            warmModelSizeMat[res, :] = vec(sum(theta2 .> 0, dims=2))
         end
 
         totEdges = sum(totEdgesVec)
@@ -381,7 +386,8 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
     grnData.netInstabilitiesUb = netInstabilitiesUb
     grnData.instabilitiesLb    = instabilitiesLb
     grnData.instabilitiesUb    = instabilitiesUb
-    grnData.lambdaRangeWarm    = lambdaRange   # store warm-start λ grid for instability bound plots
+    grnData.lambdaRangeWarm    = lambdaRange                              # warm-start λ grid for instability bound plots
+    grnData.modelSizeWarm      = vec(mean(warmModelSizeMat, dims=1))      # avg # TFs selected per gene at each warm-start λ
 end
 
 function bstartsEstimateInstability(grnData::GrnData; totLambdas = 10, instabilityLevel = "Gene", zTarget = false, targetInstability::Float64 = 0.05, outputDir::Union{String, Nothing}=nothing)  # ADDED: targetInstability for λ selection diagnostic plot
@@ -498,10 +504,5 @@ function bstartsEstimateInstability(grnData::GrnData; totLambdas = 10, instabili
     if outputDir !== nothing && outputDir !== ""
         outputFile = joinpath(outputDir, "instabOutMat.jld")
         save_object(outputFile, grnData)
-        # ADDED: auto-generate network-level diagnostic plots alongside saved data
-        plotInstabilityCurves(grnData;
-                              mode              = :network,
-                              targetInstability = targetInstability,
-                              outputDir         = outputDir)
     end
 end
