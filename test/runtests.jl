@@ -6,6 +6,15 @@ using Statistics
 using LinearAlgebra
 using DataFrames
 using Arrow
+using JLD2
+using OrderedCollections
+
+# Suppress PyPlot GUI windows in test mode (use non-interactive Agg backend)
+try
+    using PyPlot
+    pygui(false)
+catch
+end
 
 
 # =============================================================================
@@ -72,6 +81,16 @@ function write_edges_tsv(path, rows)
         println(io, "TF\tGene\tsignedQuantile\tStability\tCorrelation\tinPrior")
         for r in rows
             println(io, "$(r.TF)\t$(r.Gene)\t$(r.signedQuantile)\t$(r.Stability)\t$(r.Correlation)\t$(r.inPrior)")
+        end
+    end
+end
+
+# Write a minimal 3-column TSV for PR evaluation tests
+function write_pr_file(path, rows; header = "TF\tTarget\tScore")
+    open(path, "w") do io
+        println(io, header)
+        for r in rows
+            println(io, join(r, "\t"))
         end
     end
 end
@@ -1032,6 +1051,398 @@ end # applyTimeLag
     end
 
 end # Pseudobulk utilities
+
+
+# =============================================================================
+@testset "EBIC model selection" begin
+# =============================================================================
+
+    @testset "computeEBIC — zero betas: EBIC = n*log(RSS/n)" begin
+        # When k=0 (no selected predictors), BIC penalty and graph term are both 0.
+        # EBIC reduces to n*log(RSS/n) where RSS = sum(responses^2).
+        n = 6; p = 4
+        Random.seed!(1)
+        predictors = rand(n, 2)
+        responses  = rand(n)
+        betas_zero = zeros(2, 1)   # one lambda, both coefficients zero
+
+        scores = InferelatorJL.computeEBIC(betas_zero, responses, predictors, n, p)
+        rss    = sum(responses .^ 2)
+
+        @test length(scores) == 1
+        @test scores[1] ≈ n * log(rss / n)  atol=1e-8
+    end
+
+    @testset "computeEBIC — gamma=0.5 ≥ gamma=0 (graph penalty adds cost)" begin
+        # gamma > 0 adds the graph selection term 2γ*log C(p,k) ≥ 0, so EBIC ≥ BIC.
+        n = 10; p = 5
+        Random.seed!(2)
+        predictors = rand(n, 2)
+        responses  = rand(n)
+        betas = reshape([0.5; 0.3], 2, 1)   # k=2
+
+        s_bic  = InferelatorJL.computeEBIC(betas, responses, predictors, n, p; gamma = 0.0)
+        s_ebic = InferelatorJL.computeEBIC(betas, responses, predictors, n, p; gamma = 0.5)
+        @test s_ebic[1] >= s_bic[1]
+    end
+
+    @testset "computeEBIC — output length matches number of lambdas" begin
+        n = 8; p = 4
+        Random.seed!(3)
+        predictors = rand(n, 3)
+        responses  = rand(n)
+        # 3 lambdas: k=3, k=1, k=0
+        betas = [1.0 0.5 0.0;
+                 1.0 0.0 0.0;
+                 1.0 0.0 0.0]
+
+        scores = InferelatorJL.computeEBIC(betas, responses, predictors, n, p)
+        @test length(scores) == 3
+        # k=0 has no complexity penalty — should be ≤ k=3 when fit is the same
+        @test scores[3] <= scores[1]
+    end
+
+    @testset "ebicSelect! — output shape and non-negative stability (|β|)" begin
+        tmpdir = mktempdir()
+        data, tfaData, priorFile = make_test_pipeline(tmpdir)
+
+        grnData  = GrnData()
+        InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = "")
+        InferelatorJL.preparePenaltyMatrix!(data, grnData;
+                                            priorFilePenalties = [priorFile],
+                                            lambdaBias         = [0.5],
+                                            tfaOpt             = "")
+        buildGrn = BuildGrn()
+        InferelatorJL.ebicSelect!(grnData, buildGrn; gamma = 0.5, zScoreLASSO = true)
+
+        nGenes = size(grnData.responseMat, 1)
+        nTFs   = size(grnData.predictorMat, 1)
+
+        @test size(buildGrn.networkStability) == (nGenes, nTFs)
+        @test all(buildGrn.networkStability .>= 0)   # confidence = |β| ≥ 0
+        @test length(buildGrn.lambda)         == nGenes  # one lambda per gene
+    end
+
+    @testset "bebicSelect! — output shape and [0,1] selection-frequency range" begin
+        tmpdir = mktempdir()
+        data, tfaData, priorFile = make_test_pipeline(tmpdir)
+
+        grnData  = GrnData()
+        InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = "")
+        InferelatorJL.preparePenaltyMatrix!(data, grnData;
+                                            priorFilePenalties = [priorFile],
+                                            lambdaBias         = [0.5],
+                                            tfaOpt             = "")
+        InferelatorJL.constructSubsamples(data, grnData; totSS = 5, subsampleFrac = 0.7)
+
+        buildGrn = BuildGrn()
+        InferelatorJL.bebicSelect!(grnData, buildGrn; gamma = 0.5, zScoreLASSO = true)
+
+        nGenes = size(grnData.responseMat, 1)
+        nTFs   = size(grnData.predictorMat, 1)
+
+        @test size(buildGrn.networkStability) == (nGenes, nTFs)
+        @test all(0.0 .<= buildGrn.networkStability .<= 1.0)  # frequency ∈ [0,1]
+        @test length(buildGrn.lambda)          == nGenes
+    end
+
+    @testset "bebicSelect! — no subsamples throws" begin
+        tmpdir = mktempdir()
+        data, tfaData, priorFile = make_test_pipeline(tmpdir)
+
+        grnData  = GrnData()
+        InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = "")
+        InferelatorJL.preparePenaltyMatrix!(data, grnData;
+                                            priorFilePenalties = [priorFile],
+                                            lambdaBias         = [0.5],
+                                            tfaOpt             = "")
+        # constructSubsamples NOT called — subsamps is empty
+        buildGrn = BuildGrn()
+        @test_throws ErrorException InferelatorJL.bebicSelect!(grnData, buildGrn)
+    end
+
+end # EBIC model selection
+
+
+# =============================================================================
+@testset "Edge ranking" begin
+# =============================================================================
+
+    @testset "rankEdges! — networkMat has 6 columns and output file written" begin
+        tmpdir = mktempdir()
+        data, tfaData, priorFile = make_test_pipeline(tmpdir)
+
+        grnData  = GrnData()
+        InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = "")
+        InferelatorJL.preparePenaltyMatrix!(data, grnData;
+                                            priorFilePenalties = [priorFile],
+                                            lambdaBias         = [0.5],
+                                            tfaOpt             = "")
+
+        nGenes = size(grnData.responseMat, 1)
+        nTFs   = size(grnData.predictorMat, 1)
+
+        # Set non-zero stabilities manually to guarantee edges are ranked
+        buildGrn = BuildGrn()
+        buildGrn.networkStability = fill(0.5, nGenes, nTFs)
+
+        outDir = joinpath(tmpdir, "rankOut")
+        mkpath(outDir)
+        InferelatorJL.rankEdges!(data, tfaData, grnData, buildGrn;
+                                  mergedTFsData           = nothing,
+                                  useMeanEdgesPerGeneMode = true,
+                                  meanEdgesPerGene        = 2,
+                                  correlationWeight       = 1,
+                                  outputDir               = outDir)
+
+        @test !isempty(buildGrn.regs)
+        @test !isempty(buildGrn.targs)
+        @test size(buildGrn.networkMat, 2) == 6   # TF, Gene, signedQuantile, Stability, Correlation, inPrior
+        @test length(buildGrn.regs) == size(buildGrn.networkMat, 1)
+        @test isfile(joinpath(outDir, "grnOutMat.jld"))
+    end
+
+    @testset "rankEdges! — empty outputDir throws" begin
+        tmpdir = mktempdir()
+        data, tfaData, priorFile = make_test_pipeline(tmpdir)
+
+        grnData  = GrnData()
+        InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = "")
+        InferelatorJL.preparePenaltyMatrix!(data, grnData;
+                                            priorFilePenalties = [priorFile],
+                                            lambdaBias         = [0.5],
+                                            tfaOpt             = "")
+        buildGrn = BuildGrn()
+        buildGrn.networkStability = fill(0.5, size(grnData.responseMat, 1),
+                                              size(grnData.predictorMat, 1))
+
+        @test_throws ErrorException InferelatorJL.rankEdges!(
+            data, tfaData, grnData, buildGrn;
+            mergedTFsData = nothing, outputDir = "")
+    end
+
+end # Edge ranking
+
+
+# =============================================================================
+@testset "PR metrics" begin
+# =============================================================================
+
+    @testset "computePR — AUPR in [0,1] and expected keys present" begin
+        tmpdir  = mktempdir()
+        gsFile  = joinpath(tmpdir, "gs.tsv")
+        netFile = joinpath(tmpdir, "net.tsv")
+        write_pr_file(gsFile,  [["TF1","GeneA",1],["TF1","GeneB",1],["TF2","GeneA",1]])
+        write_pr_file(netFile, [["TF1","GeneA",0.9],["TF1","GeneB",0.7],
+                                ["TF2","GeneA",0.5],["TF2","GeneC",0.3]])
+
+        res = InferelatorJL.computePR(gsFile, netFile;
+                                      saveDir = joinpath(tmpdir, "prOut"),
+                                      doPerTF = false)
+
+        @test haskey(res, :precisions)
+        @test haskey(res, :recalls)
+        @test haskey(res, :auprs)
+        @test haskey(res, :arocs)
+        @test 0.0 <= res[:auprs][:full] <= 1.0
+        @test !isempty(res[:precisions])
+        @test res[:perTF] === nothing   # doPerTF = false
+    end
+
+    @testset "computePR — no overlapping edges returns empty result" begin
+        tmpdir  = mktempdir()
+        gsFile  = joinpath(tmpdir, "gs.tsv")
+        netFile = joinpath(tmpdir, "net.tsv")
+        write_pr_file(gsFile,  [["TF1","GeneA",1]])
+        write_pr_file(netFile, [["TF99","GeneZ",0.9]])   # TF99 not in GS
+
+        res = InferelatorJL.computePR(gsFile, netFile;
+                                      saveDir = joinpath(tmpdir, "prOut"),
+                                      doPerTF = false)
+
+        @test isempty(res[:precisions])
+        @test isempty(res[:recalls])
+    end
+
+    @testset "extractMetricsAtLimit — single limit: correct aupr and precAtLimit" begin
+        # PR curve: recall [0, 0.1, 0.2, 0.5, 1.0], precision [0.8, 0.8, 0.6, 0.4, 0.2]
+        res = Dict(
+            :recalls    => Float64[0.0, 0.1, 0.2, 0.5, 1.0],
+            :precisions => Float64[0.8, 0.8, 0.6, 0.4, 0.2],
+            :randPR     => 0.1
+        )
+        m = extractMetricsAtLimit(res, 0.2)
+
+        @test haskey(m, :aupr)
+        @test haskey(m, :auprNormalized)
+        @test haskey(m, :precAtLimit)
+        @test haskey(m, :precNormalized)
+        # findlast(r ≤ 0.2) = index 3 → precision = 0.6
+        @test m.precAtLimit    ≈ 0.6        atol=1e-8
+        @test m.precNormalized ≈ 0.6 / 0.1  atol=1e-8
+        @test m.aupr >= 0.0
+    end
+
+    @testset "extractMetricsAtLimit — vector of limits returns Dict with all keys" begin
+        res = Dict(
+            :recalls    => Float64[0.0, 0.1, 0.2, 0.5, 1.0],
+            :precisions => Float64[0.8, 0.8, 0.6, 0.4, 0.2],
+            :randPR     => 0.1
+        )
+        results = extractMetricsAtLimit(res, [0.1, 0.2, 0.5])
+
+        @test results isa Dict
+        @test haskey(results, 0.1)
+        @test haskey(results, 0.2)
+        @test haskey(results, 0.5)
+        @test results[0.1].precAtLimit ≈ 0.8  atol=1e-8
+    end
+
+    @testset "extractMetricsAtLimit — randPR=0 gives NaN for normalized metrics" begin
+        res = Dict(
+            :recalls    => Float64[0.0, 0.1, 0.5],
+            :precisions => Float64[1.0, 0.8, 0.4],
+            :randPR     => 0.0
+        )
+        m = extractMetricsAtLimit(res, 0.5)
+        @test isnan(m.auprNormalized)
+        @test isnan(m.precNormalized)
+    end
+
+    @testset "saveSummaryTables — files written with correct structure" begin
+        tmpdir   = mktempdir()
+        gsNames  = ["GS1", "GS2"]
+        netNames = ["TFA", "TFmRNA"]
+
+        auprDict = Dict(
+            "GS1" => Dict("TFA" => 0.8, "TFmRNA" => 0.6),
+            "GS2" => Dict("TFA" => 0.7, "TFmRNA" => 0.5)
+        )
+        tables = [("aupr", auprDict)]
+        saveSummaryTables(tables, gsNames, netNames, tmpdir)
+
+        outFile = joinpath(tmpdir, "aupr_summary.tsv")
+        @test isfile(outFile)
+        lines = readlines(outFile)
+        @test length(lines) == 3             # header + 2 network rows
+        @test occursin("GS1", lines[1])
+        @test occursin("GS2", lines[1])
+        @test occursin("TFA",   lines[2])
+        @test occursin("0.8",   lines[2])    # TFA / GS1 value
+    end
+
+    @testset "saveSummaryTables — multiple tables produce multiple files" begin
+        tmpdir   = mktempdir()
+        d        = Dict("GS1" => Dict("Net" => 0.5))
+        tables   = [("aupr", d), ("precAtLimit", d)]
+        saveSummaryTables(tables, ["GS1"], ["Net"], tmpdir)
+
+        @test isfile(joinpath(tmpdir, "aupr_summary.tsv"))
+        @test isfile(joinpath(tmpdir, "precAtLimit_summary.tsv"))
+    end
+
+end # PR metrics
+
+
+# =============================================================================
+@testset "R² prediction" begin
+# =============================================================================
+
+    @testset "calcR2predFromStabilities — empty testInds throws" begin
+        # trainInds = all samples → testInds is empty → error before plotting
+        tmpdir = mktempdir()
+        data, tfaData, priorFile = make_test_pipeline(tmpdir)
+
+        grnData  = GrnData()
+        InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = "")
+        InferelatorJL.preparePenaltyMatrix!(data, grnData;
+                                            priorFilePenalties = [priorFile],
+                                            lambdaBias         = [0.5],
+                                            tfaOpt             = "")
+        InferelatorJL.constructSubsamples(data, grnData; totSS = 5, subsampleFrac = 0.7)
+
+        # trainInds covers ALL samples — no leave-out set
+        grnData.trainInds = collect(1:length(data.cellLabels))
+
+        nGenes = size(grnData.responseMat, 1)
+        nTFs   = size(grnData.predictorMat, 1)
+        buildGrn = BuildGrn()
+        buildGrn.networkStability = rand(nGenes, nTFs)
+
+        @test_throws ErrorException calcR2predFromStabilities(
+            grnData, buildGrn, data, 3, joinpath(tmpdir, "r2out"))
+    end
+
+    @testset "calcR2predFromStabilities — bStARS: instabRangeNet in [0, 0.5]" begin
+        # bStARS stores raw subsample counts (max > 1).
+        # stabNormFactor should auto-detect = totSS, giving currTheta ∈ [0,1]
+        # and instability = 2θ(1-θ) ∈ [0, 0.5].
+        tmpdir = mktempdir()
+        data, tfaData, priorFile = make_test_pipeline(tmpdir)
+
+        grnData  = GrnData()
+        InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = "")
+        InferelatorJL.preparePenaltyMatrix!(data, grnData;
+                                            priorFilePenalties = [priorFile],
+                                            lambdaBias         = [0.5],
+                                            tfaOpt             = "")
+        totSS = 5
+        InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = 0.7)
+        grnData.trainInds = collect(1:8)   # leave out last 2 samples
+
+        nGenes = size(grnData.responseMat, 1)
+        nTFs   = size(grnData.predictorMat, 1)
+
+        buildGrn = BuildGrn()
+        Random.seed!(200)
+        # Simulate raw bStARS counts: values in [0, totSS], max > 1
+        buildGrn.networkStability = rand(nGenes, nTFs) .* totSS
+
+        outDir = joinpath(tmpdir, "r2_bstars")
+        calcR2predFromStabilities(grnData, buildGrn, data, 3, outDir; xaxisStepSize = 1)
+
+        r2data         = JLD2.load(joinpath(outDir, "r2pred.jld2"))
+        instabRangeNet = r2data["instabRangeNet"]
+
+        # instability = 2θ(1-θ) must lie in [0, 0.5]; values > 0.5 indicate wrong normalization
+        @test all(instabRangeNet .>= 0.0)
+        @test all(instabRangeNet .<= 0.5)
+    end
+
+    @testset "calcR2predFromStabilities — bEBIC: instabRangeNet in [0, 0.5]" begin
+        # bEBIC stores selection frequencies (max ≤ 1).
+        # stabNormFactor should auto-detect = 1.0, giving currTheta = value directly.
+        tmpdir = mktempdir()
+        data, tfaData, priorFile = make_test_pipeline(tmpdir)
+
+        grnData  = GrnData()
+        InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = "")
+        InferelatorJL.preparePenaltyMatrix!(data, grnData;
+                                            priorFilePenalties = [priorFile],
+                                            lambdaBias         = [0.5],
+                                            tfaOpt             = "")
+        InferelatorJL.constructSubsamples(data, grnData; totSS = 5, subsampleFrac = 0.7)
+        grnData.trainInds = collect(1:8)
+
+        nGenes = size(grnData.responseMat, 1)
+        nTFs   = size(grnData.predictorMat, 1)
+
+        buildGrn = BuildGrn()
+        Random.seed!(201)
+        # Simulate bEBIC frequencies: values in [0, 1], max ≤ 1
+        buildGrn.networkStability = rand(nGenes, nTFs) .* 0.9
+
+        outDir = joinpath(tmpdir, "r2_bebic")
+        calcR2predFromStabilities(grnData, buildGrn, data, 3, outDir; xaxisStepSize = 1)
+
+        r2data         = JLD2.load(joinpath(outDir, "r2pred.jld2"))
+        instabRangeNet = r2data["instabRangeNet"]
+
+        @test all(instabRangeNet .>= 0.0)
+        @test all(instabRangeNet .<= 0.5)
+    end
+
+end # R² prediction
 
 
 # =============================================================================
