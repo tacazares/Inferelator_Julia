@@ -160,8 +160,8 @@
         end
 
         if use_threads
-            localOverlapsArray = [Dict{Tuple{String, String}, Int}() for i in 1:nthreads]
-            localTFMergersArray = [Dict{String, Set{String}}() for i in 1:nthreads]
+            localOverlapsArray = [Dict{Tuple{String, String}, Int}() for i in 1:Threads.maxthreadid()]
+            localTFMergersArray = [Dict{String, Set{String}}() for i in 1:Threads.maxthreadid()]
 
             @info "Computing TF overlaps in threaded mode" nthreads
             Threads.@threads for i in 1:length(tfNames)

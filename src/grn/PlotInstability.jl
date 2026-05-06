@@ -6,13 +6,16 @@
 #
 #  Figure 1  instability_diagnostic_<mode>.png   (2 panels side by side)
 #  ─────────────────────────────────────────────────────────────────────
-#  Left panel  — Model Size vs λ
-#    Shows how many regulators appear in the network as λ decreases.
-#    At network level : total unique TFs with at least one edge anywhere.
-#    At gene level    : # TFs regulating that specific gene.
-#    A steep drop as λ increases confirms that regularization is working.
+#  Both panels share the warm-start λ range on the x-axis so model size
+#  and instability can be read at the same regularization values.
 #
-#  Right panel — Instability (Lower + Upper Bound) vs λ
+#  Left panel  — Model Size vs λ  (warm-start range)
+#    Average # TFs selected per gene across warm-start subsamples.
+#    Computed from bstarsWarmStart (theta2 > 0 per gene, averaged).
+#    Should decrease monotonically as λ increases — confirms LASSO is
+#    working and the warm-start range is wide enough to show variation.
+#
+#  Right panel — Instability (Lower + Upper Bound) vs λ  (warm-start range)
 #    bStARS stability bounds computed during the warm-start pass over the
 #    full λ search range [minLambda, maxLambda].
 #    The dashed line marks targetInstability (default 0.05).
@@ -26,10 +29,10 @@
 #
 #  How Figures 1 and 2 relate
 #  ─────────────────────────────────────────────────────────────────────
-#  Fig 1 right panel shows the broad warm-start search window.
-#  Fig 2 zooms into the fine-pass λ grid within that window and confirms
-#  that the chosen λ sits at the minimum of |instability − target|.
-#  Together they give a complete picture of the regularisation selection.
+#  Fig 1 shows the broad warm-start search window — model size and
+#  instability bounds over the full range, so you can see regularization
+#  working. Fig 2 zooms into the fine-pass grid within that window and
+#  confirms the chosen λ sits at the minimum of |instability − target|.
 #
 #  Standalone usage (per-gene diagnostics)
 #  ─────────────────────────────────────────────────────────────────────
@@ -89,8 +92,8 @@ function plotInstabilityCurves(
         mkpath(outputDir)
     end
 
-    lambdaFine = grnData.lambdaRange       # fine-pass λ grid (x-axis for Fig 2 + model size)
-    lambdaWarm = grnData.lambdaRangeWarm   # warm-start λ grid (x-axis for instability bounds)
+    lambdaFine = grnData.lambdaRange       # fine-pass λ grid (x-axis for Fig 2)
+    lambdaWarm = grnData.lambdaRangeWarm   # warm-start λ grid (x-axis for Fig 1)
     totLambdas = length(lambdaFine)
 
     # ── Select data arrays based on mode ──────────────────────────────────────
@@ -102,15 +105,12 @@ function plotInstabilityCurves(
         # Fine-pass instability (one value per λ in lambdaFine)
         instabFine = grnData.netInstabilities
 
-        # Model size: unique TFs with ≥ 1 non-zero edge across all genes at each λ
-        modelSize = zeros(Int, totLambdas)
-        for lind in 1:totLambdas
-            slab = grnData.stabilityMat[lind, :, :]          # totResponses × totPreds
-            modelSize[lind] = sum(vec(any(isfinite.(slab) .& (slab .> 0), dims=1)))
-        end
+        # Model size: avg # TFs selected per gene at each warm-start λ
+        # (stored during bstarsWarmStart so both panels share the same x-axis)
+        modelSize  = grnData.modelSizeWarm
 
         modeLabel   = "Network"
-        modelLabel  = "# Unique TF Regulators"
+        modelLabel  = "Avg # TF Regulators per Gene"
         figSuffix   = "network"
 
     elseif mode == :gene
@@ -125,12 +125,14 @@ function plotInstabilityCurves(
         # Per-gene fine-pass instability
         instabFine = grnData.geneInstabilities[geneIdx, :]
 
-        # Model size: # TFs with non-zero edge to this gene at each fine-pass λ
-        modelSize = zeros(Int, totLambdas)
+        # Per-gene model size: # TFs with non-zero stability at each fine-pass λ
+        # (fine-pass grid used here because stabilityMat is only on the fine grid)
+        modelSizeFine = zeros(Int, totLambdas)
         for lind in 1:totLambdas
             row = grnData.stabilityMat[lind, geneIdx, :]
-            modelSize[lind] = sum(isfinite.(row) .& (row .> 0))
+            modelSizeFine[lind] = sum(isfinite.(row) .& (row .> 0.05))
         end
+        modelSize = Float64.(modelSizeFine)
 
         modeLabel  = "Gene: $geneName"
         modelLabel = "# TF Regulators"
@@ -141,11 +143,19 @@ function plotInstabilityCurves(
     end
 
     # ── Figure 1: Model size (left) + Instability bounds (right) ─────────────
+    # Both panels now share lambdaWarm on the x-axis so regularization strength
+    # and instability can be read at the same λ values.
     fig1, (ax1, ax2) = PyPlot.subplots(1, 2; figsize = (10, 4))
     fig1.suptitle("Regularization Penalty Selection — $modeLabel", fontsize = 13)
 
-    # Left panel — model size vs λ (fine-pass range)
-    ax1.plot(lambdaFine, modelSize; color = "steelblue", linewidth = 1.5)
+    # Left panel — model size vs λ (warm-start range, same x-axis as right panel)
+    lambdaLeft = (mode == :network) ? lambdaWarm : lambdaFine
+    ax1.plot(lambdaLeft, modelSize; color = "steelblue", linewidth = 1.5)
+    if mode == :network && length(lambdaFine) > 0
+        ax1.axvspan(minimum(lambdaFine), maximum(lambdaFine);
+                    alpha = 0.15, color = "gray", label = "Fine-pass window")
+        ax1.legend(fontsize = 8)
+    end
     ax1.set_xscale("log")
     ax1.set_xlabel("λ",          fontsize = 11)
     ax1.set_ylabel(modelLabel,   fontsize = 10)
@@ -165,7 +175,7 @@ function plotInstabilityCurves(
     PyPlot.tight_layout()
 
     if !isnothing(outputDir)
-        savePath1 = joinpath(outputDir, "instability_diagnostic_$(figSuffix).png")
+        savePath1 = joinpath(outputDir, "warmstart_bounds_$(figSuffix).png")
         PyPlot.savefig(savePath1; dpi = 150)
         @info "Saved instability diagnostic" file = savePath1
     else
@@ -191,13 +201,17 @@ function plotInstabilityCurves(
     PyPlot.tight_layout()
 
     if !isnothing(outputDir)
-        savePath2 = joinpath(outputDir, "instability_selection_$(figSuffix).png")
+        savePath2 = joinpath(outputDir, "lambda_selection_$(figSuffix).png")
         PyPlot.savefig(savePath2; dpi = 150)
         @info "Saved λ selection diagnostic" file = savePath2 chosenλ = chosenλ
     else
         PyPlot.show()
     end
     PyPlot.close(fig2)
+    # Release all Python figure references immediately so the GC doesn't defer
+    # their cleanup to a worker thread (which crashes PyCall via GIL violation).
+    PyPlot.plt.close("all")
+    GC.gc()
 
     return nothing
 end

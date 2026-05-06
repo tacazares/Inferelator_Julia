@@ -56,8 +56,8 @@ function runInferelator(;
     totSS::Int                      = 80,
     bstarsTotSS::Int                = 5,
     subsampleFrac::Float64          = 0.68,
-    minLambda::Float64              = 0.01,
-    maxLambda::Float64              = 0.5,
+    minLambda::Union{Float64, Nothing} = nothing,
+    maxLambda::Union{Float64, Nothing} = nothing,
     totLambdasBstars::Int           = 20,
     totLambdas::Int                 = 40,
     targetInstability::Float64      = 0.05,
@@ -66,7 +66,9 @@ function runInferelator(;
     minTargets::Int                 = 3,
     edgeSS::Int                     = 0,
     lambdaBias::Vector{Float64}     = [0.5],
-    instabilityLevel::String        = "Network",  # "Network" or "Gene"
+    modelSelection::String          = "bStARS",   # "bStARS", "EBIC", or "bEBIC"
+    gamma::Float64                  = 0.5,         # EBIC sparsity penalty (EBIC / bEBIC only)
+    instabilityLevel::String        = "Network",  # "Network" or "Gene"  (bStARS only)
     useMeanEdgesPerGeneMode::Bool   = true,
     combineOpt::String              = "max",       # "max", "mean", or "min"
     zScoreTFA::Bool                 = true,
@@ -75,37 +77,68 @@ function runInferelator(;
     timeLag::Real                   = 0.0,   # lag value in same units as timeLagFile (e.g. hours)
     suffix::String                  = ""     # optional custom label appended to output dir, e.g. "_5KBTSS"
 )
-    # Build output directory name (encodes key run parameters)
-    subsamplePct    = subsampleFrac * 100
-    subsampleStr    = isinteger(subsamplePct) ? string(Int(subsamplePct)) : replace(string(subsamplePct), "." => "p")
-    lambdaStr       = join(replace.(string.(lambdaBias), "." => "p"), "_")
-    zTFAStr         = zScoreTFA   ? "" : "_noZscoreTFA"
-    zLASSOStr       = zScoreLASSO ? "" : "_noZscoreLASSO"
-    networkBaseName = lowercase(instabilityLevel) * "Lambda" * lambdaStr * "_" * string(totSS) * "totSS_" *
-                      string(meanEdgesPerGene) * "tfsPerGene_" * "subsamplePCT" * subsampleStr *
-                      "_" * combineOpt * zTFAStr * zLASSOStr * suffix
+    # Build output directory name (encodes method and key run parameters)
+    subsamplePct = subsampleFrac * 100
+    subsampleStr = isinteger(subsamplePct) ? string(Int(subsamplePct)) : replace(string(subsamplePct), "." => "p")
+    lambdaStr    = join(replace.(string.(lambdaBias), "." => "p"), "_")
+    zTFAStr      = zScoreTFA   ? "" : "_noZscoreTFA"
+    zLASSOStr    = zScoreLASSO ? "" : "_noZscoreLASSO"
+    gammaStr     = replace(string(gamma), "." => "p")
+
+    methodStr = if modelSelection == "bStARS"
+        lowercase(instabilityLevel) * "Lambda_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
+    elseif modelSelection == "bEBIC"
+        "bEBIC_gamma" * gammaStr * "_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
+    elseif modelSelection == "EBIC"
+        "EBIC_gamma" * gammaStr
+    end
+
+    networkBaseName = methodStr * "_" * lambdaStr * "_" *
+                      string(meanEdgesPerGene) * "tfsPerGene_" *
+                      combineOpt * zTFAStr * zLASSOStr * suffix
     dirOut = joinpath(outputDir, networkBaseName)
     mkpath(dirOut)
 
     # Save all run parameters for reproducibility
+    _j(::Nothing)         = "null"
+    _j(x::Bool)           = x ? "true" : "false"
+    _j(x::AbstractString) = "\"" * replace(x, "\\" => "\\\\", "\"" => "\\\"") * "\""
+    _j(x::AbstractVector) = "[" * join(_j.(x), ", ") * "]"
+    _j(x)                 = string(x)
+
     open(joinpath(dirOut, "run_params.json"), "w") do io
         write(io, """{
-  "timestamp":               "$(Dates.now())",
-  "geneExprFile":            "$(geneExprFile)",
-  "targFile":                "$(targFile)",
-  "regFile":                 "$(regFile)",
-  "priorFile":               "$(priorFile)",
-  "lambdaBias":              $(lambdaBias),
-  "totSS":                   $(totSS),
-  "bstarsTotSS":             $(bstarsTotSS),
-  "subsampleFrac":           $(subsampleFrac),
-  "targetInstability":       $(targetInstability),
-  "meanEdgesPerGene":        $(meanEdgesPerGene),
-  "instabilityLevel":        "$(instabilityLevel)",
-  "useMeanEdgesPerGeneMode": $(useMeanEdgesPerGeneMode),
-  "combineOpt":              "$(combineOpt)",
-  "zScoreTFA":               $(zScoreTFA),
-  "zScoreLASSO":             $(zScoreLASSO)
+  "timestamp":               "$( Dates.now()               )",
+  "geneExprFile":            $( _j(geneExprFile)            ),
+  "targFile":                $( _j(targFile)                ),
+  "regFile":                 $( _j(regFile)                 ),
+  "priorFile":               $( _j(priorFile)               ),
+  "priorFilePenalties":      $( _j(priorFilePenalties)      ),
+  "tfaGeneFile":             $( _j(tfaGeneFile)             ),
+  "tfaOptions":              $( _j(tfaOptions)              ),
+  "modelSelection":          $( _j(modelSelection)          ),
+  "gamma":                   $( _j(gamma)                   ),
+  "lambdaBias":              $( _j(lambdaBias)              ),
+  "minLambda":               $( _j(minLambda)               ),
+  "maxLambda":               $( _j(maxLambda)               ),
+  "totSS":                   $( _j(totSS)                   ),
+  "bstarsTotSS":             $( _j(bstarsTotSS)             ),
+  "totLambdasBstars":        $( _j(totLambdasBstars)        ),
+  "totLambdas":              $( _j(totLambdas)              ),
+  "subsampleFrac":           $( _j(subsampleFrac)           ),
+  "targetInstability":       $( _j(targetInstability)       ),
+  "meanEdgesPerGene":        $( _j(meanEdgesPerGene)        ),
+  "correlationWeight":       $( _j(correlationWeight)       ),
+  "instabilityLevel":        $( _j(instabilityLevel)        ),
+  "useMeanEdgesPerGeneMode": $( _j(useMeanEdgesPerGeneMode) ),
+  "combineOpt":              $( _j(combineOpt)              ),
+  "minTargets":              $( _j(minTargets)              ),
+  "edgeSS":                  $( _j(edgeSS)                  ),
+  "zScoreTFA":               $( _j(zScoreTFA)               ),
+  "zScoreLASSO":             $( _j(zScoreLASSO)             ),
+  "timeLagFile":             $( _j(timeLagFile)             ),
+  "timeLag":                 $( _j(timeLag)                 ),
+  "suffix":                  $( _j(suffix)                  )
 }""")
     end
 
@@ -142,30 +175,57 @@ function runInferelator(;
 
         @info "Building network" tfaOpt=(isempty(tfaOpt) ? "TFA" : tfaOpt)
 
-        grnData = GrnData()
+        grnData  = GrnData()
+        buildGrn = BuildGrn()
         InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = tfaOpt)
         InferelatorJL.preparePenaltyMatrix!(data, grnData;
                                              priorFilePenalties = priorFilePenalties,
                                              lambdaBias         = lambdaBias,
                                              tfaOpt             = tfaOpt)
-        InferelatorJL.constructSubsamples(data, grnData; totSS = bstarsTotSS, subsampleFrac = subsampleFrac)
-        InferelatorJL.bstarsWarmStart(data, tfaData, grnData;
-                                       minLambda         = minLambda,
-                                       maxLambda         = maxLambda,
-                                       totLambdasBstars  = totLambdasBstars,
-                                       targetInstability = targetInstability,
-                                       zTarget           = zScoreLASSO)
-        InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
-        InferelatorJL.bstartsEstimateInstability(grnData;
-                                                  totLambdas       = totLambdas,
-                                                  instabilityLevel = instabilityLevel,
-                                                  zTarget          = zScoreLASSO,
-                                                  outputDir        = instabilitiesDir)
 
-        buildGrn = BuildGrn()
-        InferelatorJL.chooseLambda!(grnData, buildGrn;
-                                     instabilityLevel  = instabilityLevel,
-                                     targetInstability = targetInstability)
+        if modelSelection == "bStARS"
+            InferelatorJL.constructSubsamples(data, grnData; totSS = bstarsTotSS, subsampleFrac = subsampleFrac)
+            InferelatorJL.bstarsWarmStart(data, tfaData, grnData;
+                                           minLambda         = minLambda,
+                                           maxLambda         = maxLambda,
+                                           totLambdasBstars  = totLambdasBstars,
+                                           targetInstability = targetInstability,
+                                           zTarget           = zScoreLASSO)
+            InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
+            InferelatorJL.bstartsEstimateInstability(grnData;
+                                                      totLambdas        = totLambdas,
+                                                      instabilityLevel  = instabilityLevel,
+                                                      zTarget           = zScoreLASSO,
+                                                      targetInstability = targetInstability,
+                                                      outputDir         = instabilitiesDir)
+            # Plot on main thread — PyCall crashes if called from a worker thread
+            InferelatorJL.plotInstabilityCurves(grnData;
+                                                 mode              = :network,
+                                                 targetInstability = targetInstability,
+                                                 outputDir         = instabilitiesDir)
+            GC.gc()   # force Python object cleanup on main thread before next GC-triggering allocation
+            InferelatorJL.chooseLambda!(grnData, buildGrn;
+                                         instabilityLevel  = instabilityLevel,
+                                         targetInstability = targetInstability)
+
+        elseif modelSelection == "EBIC"
+            InferelatorJL.ebicSelect!(grnData, buildGrn; gamma = gamma, zScoreLASSO = zScoreLASSO)
+
+        elseif modelSelection == "bEBIC"
+            # Stage 1: per-gene EBIC-optimal lambda on each subsample → lambdaSS, networkStability
+            # Stage 2: aggregate (default median) + final full-data fit → betas, lambda
+            InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
+            InferelatorJL.bebicEstimateLambdas!(grnData, buildGrn;
+                                                gamma       = gamma,
+                                                minLambda   = minLambda,
+                                                maxLambda   = maxLambda,
+                                                totLambdas  = totLambdas,
+                                                zScoreLASSO = zScoreLASSO)
+            InferelatorJL.bebicFinalFit!(grnData, buildGrn;
+                                         zScoreLASSO = zScoreLASSO,
+                                         outputDir   = instabilitiesDir)
+        end
+
         InferelatorJL.rankEdges!(data, tfaData, grnData, buildGrn;
                                     mergedTFsData           = mergedTFsData,
                                     useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
