@@ -101,12 +101,15 @@ mutable struct GrnData
     lambdaRange::Vector{Float64}
     lambdaRangeGene::Vector{Vector{Float64}}
     lambdaRangeWarm::Vector{Float64}             # ADDED: λ grid from warm-start pass (needed for instability bound plots)
+    modelSizeWarm::Vector{Float64}               # ADDED: avg # TFs selected per gene at each warm-start λ (for model size panel)
     stabilityMat::Array{Float64}
     priorMatProcessed::Matrix{Float64}
     betas::Array{Float64,3}
     targGenes::Vector{String}                    # ADDED: target gene names — row index of stabilityMat (needed for per-gene plots)
-    trainInds::Vector{Int}                       # ADDED: training sample indices (excludes leave-out set); needed for R² prediction
-    ebicLambdas::Vector{Float64}                 # ADDED: per-gene lambda selected by EBIC or bEBIC model selection
+    trainInds::Vector{Int}                       # training sample indices (excludes leave-out set); needed for R² prediction
+    ebicLambdas::Vector{Float64}                 # per-gene lambda selected by EBIC or bEBIC model selection
+    lambdaSS::Matrix{Float64}                    # bEBIC: totResponses × totSS matrix of per-subsample EBIC-optimal lambdas
+    ebicNonzero::Vector{Int}                     # EBIC: number of non-zero coefficients at the chosen lambda per gene
 
     function GrnData()
         return new(
@@ -128,12 +131,15 @@ mutable struct GrnData
             [],                                   # lambdaRange
             Vector{Vector{Float64}}(undef, 0),   # lambdaRangeGene
             [],                                   # lambdaRangeWarm
+            Float64[],                            # modelSizeWarm
             Array{Float64}(undef, 0, 0, 0),      # stabilityMat (3-D)
             Matrix{Float64}(undef, 0, 0),        # priorMatProcessed
             Array{Float64,3}(undef, 0, 0, 0),   # betas
             [],                                   # targGenes
             Int[],                                # trainInds
-            Float64[]                             # ebicLambdas
+            Float64[],                            # ebicLambdas
+            Matrix{Float64}(undef, 0, 0),        # lambdaSS
+            Int[]                                 # ebicNonzero
         )
     end
 end

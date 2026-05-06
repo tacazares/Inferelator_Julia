@@ -104,6 +104,7 @@ function chooseLambda!(grnData::GrnData, buildGrn::BuildGrn; instabilityLevel = 
     buildGrn.lambda = lambdaTrack
     buildGrn.networkStability = networkStability
     buildGrn.betas = betas
+    @info "chooseLambda! selected" chosenλ = lambdaTrack instabilityLevel = instabilityLevel
 end
 
 # function firstNByGroup(vect::AbstractVector, N::Integer)
@@ -327,8 +328,20 @@ function rankEdges!(expressionData::GeneExpressionData, tfaData::PriorTFAData, g
     # Compute signedQuantiles
     signedQuantile = sign.(coefVec) .* quantiles
 
-    ## ------- Color calculations for JP-Gene-Viz 
+    ## ------- Color calculations for JP-Gene-Viz
     # Compute strokeWidth and colors
+    if isempty(rankings)
+        error("rankEdges!: no non-zero edges remain after filtering — the inferred " *
+              "network is empty. Likely cause: model selection chose an overly sparse " *
+              "solution (all coefficients zero). " *
+              "Common triggers for EBIC / bEBIC: " *
+              "(1) zScoreLASSO=false without explicit minLambda/maxLambda — the response " *
+              "is on its raw scale so lambda_max is inflated and EBIC picks a null model; " *
+              "(2) gamma too high (current default 0.5) — try gamma=0.0 or gamma=0.25; " *
+              "(3) lambda range too narrow — pass minLambda/maxLambda or leave as nothing " *
+              "to let GLMNet choose. " *
+              "See ebicSelect! / bebicEstimateLambdas! docstrings for details.")
+    end
     minRank, maxRank = extrema(rankings)
     rankRange = max(maxRank - minRank, eps())  # prevent division by zero
     # Dash Styling

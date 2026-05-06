@@ -51,27 +51,31 @@ tfaOptions           = ["", "TFmRNA"]   # "" → TFA mode, "TFmRNA" → mRNA mod
 combineOpt           = "max"            # consensus aggregation method: "max", "mean", or "min" stability per edge
 suffix               = ""               # optional label appended to output dir, e.g. "_5KBTSS", "_SCENICprior"
 
-# --- Model selection
-modelSelection       = "bStARS"    # "bStARS" : stability-based (default, recommended)
-                                   # "EBIC"   : Extended BIC — fast, no subsampling required
-                                   # "bEBIC"  : bootstrap EBIC — subsampled, produces selection-frequency scores
-gamma                = 0.5         # EBIC sparsity hyperparameter: 0 = BIC, 1 = maximum penalty
-                                   # ignored when modelSelection = "bStARS"
+# --- Model selection ---------------------------------------------------------
+modelSelection = "bStARS"   # "bStARS" : stability-based (default, recommended)
+                             # "EBIC"   : Extended BIC — fast, no subsampling required
+                             # "bEBIC"  : bootstrap EBIC — subsampled, selection-frequency scores
+gamma          = 0.5         # EBIC sparsity penalty: 0 = BIC, 1 = maximum sparsity
+                             # (EBIC / bEBIC only — ignored by bStARS)
 
-# --- Subsampling and stability (bStARS / bEBIC)
-totSS                = 80          # total bootstrap subsamples for stability estimation
-bstarsTotSS          = 5           # subsamples for warm-start lambda range search (coarser, faster)
-subsampleFrac        = 0.68        # fraction of samples per subsample (0.63–0.68 typical)
-targetInstability    = 0.05        # instability threshold for bStARS lambda selection (0.05 = 5%)
-instabilityLevel     = "Network"   # "Network": one shared lambda for all genes
-                                   # "Gene"   : per-gene lambda — slower, more flexible
+# --- Subsampling (bStARS and bEBIC) ------------------------------------------
+totSS         = 80    # total bootstrap subsamples
+subsampleFrac = 0.68  # fraction of samples per subsample (0.63–0.68 typical)
 
-# --- Lambda grid
-minLambda            = 0.01        # LASSO lambda search range — lower bound
-maxLambda            = 0.5         # LASSO lambda search range — upper bound
-totLambdasBstars     = 20          # lambdas tested in warm-start phase
-totLambdas           = 40          # lambdas tested in full stability estimation
+# --- bStARS-only settings ----------------------------------------------------
+bstarsTotSS       = 5     # subsamples for warm-start lambda range search (coarser pass)
+targetInstability = 0.05  # instability threshold for lambda selection (5% default)
+instabilityLevel  = "Network"  # "Network": one shared λ across all genes
+                               # "Gene"   : per-gene λ — slower, more flexible
 
+# --- Lambda grid -------------------------------------------------------------
+minLambda        = 0.01  # search range lower bound  (all methods)
+maxLambda        = 0.5   # search range upper bound  (all methods)
+totLambdasBstars = 20    # grid points in warm-start pass       (bStARS only)
+totLambdas       = 40    # grid points in full stability pass   (bStARS)
+                         # also used by EBIC / bEBIC when minLambda/maxLambda are set;
+                         # leave minLambda/maxLambda as nothing to let GLMNet choose its
+                         # own solution path automatically (recommended for EBIC / bEBIC)
 # --- Network structure
 meanEdgesPerGene     = 20          # average TF regulators retained per target gene
 useMeanEdgesPerGeneMode = true     # true : keep meanEdgesPerGene × nGenes edges total
@@ -85,6 +89,8 @@ minTargets           = 3           # minimum targets a TF must regulate in the p
 edgeSS               = 0           # TFA edge subsampling replicates; 0 = no subsampling
 zScoreTFA            = true        # z-score target expression before TFA estimation
 zScoreLASSO          = true        # z-score target expression before LASSO regression
+timeLagFile          = ""          # path to 4-column time-lag TSV; "" skips step 3b
+timeLag              = 0.0         # lag value in same units as timeLagFile (e.g. hours)
 
 geneExprFile = "/path/to/expression.txt"         # genes × samples (.txt or .arrow)
 targFile     = "/path/to/target_genes.txt"       # one gene per line
@@ -94,37 +100,68 @@ priorFile          = "/path/to/prior.tsv"
 priorFilePenalties = ["/path/to/prior.tsv"]
 tfaGeneFile        = ""   # optional: restrict TFA estimation to a gene subset
 
-# --- Build output directory name (encodes key run parameters)
-subsamplePct    = subsampleFrac * 100
-subsampleStr    = isinteger(subsamplePct) ? string(Int(subsamplePct)) : replace(string(subsamplePct), "." => "p")
-lambdaStr       = join(replace.(string.(lambdaBias), "." => "p"), "_")
-zTFAStr         = zScoreTFA   ? "" : "_noZscoreTFA"
-zLASSOStr       = zScoreLASSO ? "" : "_noZscoreLASSO"
-networkBaseName = lowercase(instabilityLevel) * "Lambda" * lambdaStr * "_" * string(totSS) * "totSS_" *
-                  string(meanEdgesPerGene) * "tfsPerGene_" * "subsamplePCT" * subsampleStr *
-                  "_" * combineOpt * zTFAStr * zLASSOStr * suffix
+# --- Build output directory name (encodes method and key run parameters)
+subsamplePct = subsampleFrac * 100
+subsampleStr = isinteger(subsamplePct) ? string(Int(subsamplePct)) : replace(string(subsamplePct), "." => "p")
+lambdaStr    = join(replace.(string.(lambdaBias), "." => "p"), "_")
+zTFAStr      = zScoreTFA   ? "" : "_noZscoreTFA"
+zLASSOStr    = zScoreLASSO ? "" : "_noZscoreLASSO"
+gammaStr     = replace(string(gamma), "." => "p")
+
+methodStr = if modelSelection == "bStARS"
+    lowercase(instabilityLevel) * "Lambda_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
+elseif modelSelection == "bEBIC"
+    "bEBIC_gamma" * gammaStr * "_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
+elseif modelSelection == "EBIC"
+    "EBIC_gamma" * gammaStr
+end
+
+networkBaseName = methodStr * "_" * lambdaStr * "_" *
+                  string(meanEdgesPerGene) * "tfsPerGene_" *
+                  combineOpt * zTFAStr * zLASSOStr * suffix
 dirOut = joinpath(outputDir, networkBaseName)
 mkpath(dirOut)
 
 # Save all run parameters for reproducibility
+_j(::Nothing)         = "null"
+_j(x::Bool)           = x ? "true" : "false"
+_j(x::AbstractString) = "\"" * replace(x, "\\" => "\\\\", "\"" => "\\\"") * "\""
+_j(x::AbstractVector) = "[" * join(_j.(x), ", ") * "]"
+_j(x)                 = string(x)
+
 open(joinpath(dirOut, "run_params.json"), "w") do io
     write(io, """{
-  "timestamp":               "$(Dates.now())",
-  "geneExprFile":            "$(geneExprFile)",
-  "targFile":                "$(targFile)",
-  "regFile":                 "$(regFile)",
-  "priorFile":               "$(priorFile)",
-  "lambdaBias":              $(lambdaBias),
-  "totSS":                   $(totSS),
-  "bstarsTotSS":             $(bstarsTotSS),
-  "subsampleFrac":           $(subsampleFrac),
-  "targetInstability":       $(targetInstability),
-  "meanEdgesPerGene":        $(meanEdgesPerGene),
-  "instabilityLevel":        "$(instabilityLevel)",
-  "useMeanEdgesPerGeneMode": $(useMeanEdgesPerGeneMode),
-  "combineOpt":              "$(combineOpt)",
-  "zScoreTFA":               $(zScoreTFA),
-  "zScoreLASSO":             $(zScoreLASSO)
+  "timestamp":               "$( Dates.now()               )",
+  "geneExprFile":            $( _j(geneExprFile)            ),
+  "targFile":                $( _j(targFile)                ),
+  "regFile":                 $( _j(regFile)                 ),
+  "priorFile":               $( _j(priorFile)               ),
+  "priorFilePenalties":      $( _j(priorFilePenalties)      ),
+  "tfaGeneFile":             $( _j(tfaGeneFile)             ),
+  "tfaOptions":              $( _j(tfaOptions)              ),
+  "modelSelection":          $( _j(modelSelection)          ),
+  "gamma":                   $( _j(gamma)                   ),
+  "lambdaBias":              $( _j(lambdaBias)              ),
+  "minLambda":               $( _j(minLambda)               ),
+  "maxLambda":               $( _j(maxLambda)               ),
+  "totSS":                   $( _j(totSS)                   ),
+  "bstarsTotSS":             $( _j(bstarsTotSS)             ),
+  "totLambdasBstars":        $( _j(totLambdasBstars)        ),
+  "totLambdas":              $( _j(totLambdas)              ),
+  "subsampleFrac":           $( _j(subsampleFrac)           ),
+  "targetInstability":       $( _j(targetInstability)       ),
+  "meanEdgesPerGene":        $( _j(meanEdgesPerGene)        ),
+  "correlationWeight":       $( _j(correlationWeight)       ),
+  "instabilityLevel":        $( _j(instabilityLevel)        ),
+  "useMeanEdgesPerGeneMode": $( _j(useMeanEdgesPerGeneMode) ),
+  "combineOpt":              $( _j(combineOpt)              ),
+  "minTargets":              $( _j(minTargets)              ),
+  "edgeSS":                  $( _j(edgeSS)                  ),
+  "zScoreTFA":               $( _j(zScoreTFA)               ),
+  "zScoreLASSO":             $( _j(zScoreLASSO)             ),
+  "timeLagFile":             $( _j(timeLagFile)             ),
+  "timeLag":                 $( _j(timeLag)                 ),
+  "suffix":                  $( _j(suffix)                  )
 }""")
 end
 
@@ -173,8 +210,6 @@ InferelatorJL.calculateTFA!(tfaData, data;
 # and active protein. Requires a 4-column TSV (SampleQ, TimeQ, SampleP, TimeP).
 # Leave timeLagFile = "" to skip this step entirely.
 
-timeLagFile = "path/to/timeLag.tsv"   # set to "" to skip
-timeLag     = 0.5                      # lag in same time units as timeLagFile
 InferelatorJL.applyTimeLag!(tfaData, data, timeLagFile, timeLag)
 
 # =============================================================================
@@ -209,10 +244,17 @@ for tfaOpt in tfaOptions
         # Full estimation pass: fine lambda grid on full subsample set
         InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
         InferelatorJL.bstartsEstimateInstability(grnData;
-                                                  totLambdas       = totLambdas,
-                                                  instabilityLevel = instabilityLevel,
-                                                  zTarget          = zScoreLASSO,
-                                                  outputDir        = instabilitiesDir)
+                                                  totLambdas        = totLambdas,
+                                                  instabilityLevel  = instabilityLevel,
+                                                  zTarget           = zScoreLASSO,
+                                                  targetInstability = targetInstability,
+                                                  outputDir         = instabilitiesDir)
+        # Plot on main thread — PyCall crashes if called from a worker thread
+        InferelatorJL.plotInstabilityCurves(grnData;
+                                             mode              = :network,
+                                             targetInstability = targetInstability,
+                                             outputDir         = instabilitiesDir)
+        GC.gc()   #cleanup on main thread before next GC-triggering allocation
         InferelatorJL.chooseLambda!(grnData, buildGrn;
                                      instabilityLevel  = instabilityLevel,
                                      targetInstability = targetInstability)
@@ -221,14 +263,25 @@ for tfaOpt in tfaOptions
         # Single full-data LASSO fit per gene — no subsampling required
         InferelatorJL.ebicSelect!(grnData, buildGrn;
                                    gamma       = gamma,
+                                   minLambda   = minLambda,
+                                   maxLambda   = maxLambda,
+                                   totLambdas  = totLambdas,
                                    zScoreLASSO = zScoreLASSO)
-
+                                   
     elseif modelSelection == "bEBIC"
-        # Subsampled EBIC — produces selection-frequency scores like bStARS
+        # Subsampled EBIC — produces selection-count scores (0–totSS) like bStARS
+        # Stage 1: per-gene EBIC-optimal lambda on each subsample → lambdaSS, networkStability
+        # Stage 2: aggregate (default median) + final full-data fit → betas, lambda
         InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
-        InferelatorJL.bebicSelect!(grnData, buildGrn;
-                                    gamma       = gamma,
-                                    zScoreLASSO = zScoreLASSO)
+        InferelatorJL.bebicEstimateLambdas!(grnData, buildGrn;
+                                            gamma       = gamma,
+                                            minLambda   = minLambda,
+                                            maxLambda   = maxLambda,
+                                            totLambdas  = totLambdas,
+                                            zScoreLASSO = zScoreLASSO)
+        InferelatorJL.bebicFinalFit!(grnData, buildGrn;
+                                     zScoreLASSO = zScoreLASSO,
+                                     outputDir   = instabilitiesDir)
 
     else
         error("modelSelection must be \"bStARS\", \"EBIC\", or \"bEBIC\". Got: \"$modelSelection\"")

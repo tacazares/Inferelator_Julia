@@ -13,10 +13,12 @@ using the **mLASSO-StARS** algorithm.
 InferelatorJL infers genome-scale gene regulatory networks (GRNs) by combining
 gene expression data with a prior network (e.g., from ATAC-seq or ChIP-seq) to
 identify transcription factor (TF) → target gene regulatory relationships.
-The method uses **multi-scale LASSO with Stability Approach to Regularization
+The core method is **multi-scale LASSO with Stability Approach to Regularization
 Selection (mLASSO-StARS)**, a penalized regression framework in which the prior
-network biases edge selection and stability selection across bootstrap subsamples
-determines a data-driven sparsity level.
+network biases edge selection and bootstrap stability across subsamples determines
+a data-driven sparsity level. Two additional model-selection methods are available
+as alternatives to bStARS: **EBIC** (single-fit, fast) and **bEBIC** (bootstrap EBIC,
+produces selection-count confidence scores directly comparable to bStARS).
 
 **Key features:**
 
@@ -24,7 +26,8 @@ determines a data-driven sparsity level.
 - Estimates **TF activity (TFA)** via least squares as an alternative to raw TF mRNA
 - Builds separate networks for TFA and TF mRNA predictors, then combines them
 - Prior-weighted LASSO penalties reduce false positives for prior-supported edges
-- Network-level or gene-level instability thresholding
+- Three model-selection methods: `bStARS` (default), `EBIC`, `bEBIC`
+- Network-level or gene-level instability thresholding (bStARS)
 - Built-in PR / ROC evaluation against gold-standard interaction sets
 - Fully multithreaded subsampling loop
 
@@ -97,7 +100,7 @@ The full pipeline has seven steps. Each step is a single function call.
 | 1 | `loadData` | Load expression matrix; filter to target genes and regulators |
 | 2–3 | `loadPrior` + `estimateTFA` | Process prior, merge degenerate TFs, estimate TF activity via least squares |
 | 3b *(optional)* | `applyTimeLag` | Adjust TFA and TF mRNA for the delay between TF transcription and protein activity (time-series data only) |
-| 4 | `buildNetwork` | Run mLASSO-StARS for one predictor mode (TFA or TF mRNA) |
+| 4 | `buildNetwork` | Infer GRN for one predictor mode (TFA or TF mRNA); model selection via `bStARS`, `EBIC`, or `bEBIC` |
 | 5 | `aggregateNetworks` | Combine TFA and mRNA edge lists into a consensus network |
 | 6 | `refineTFA` | Re-estimate TFA using the consensus network as a data-driven prior |
 | 7 | `evaluateNetwork` | Evaluate any network against gold standards (PR/ROC curves) |
@@ -124,15 +127,19 @@ aggregated in Step 5.
 
 All outputs are written under the directory specified by `outputDir`.
 
-| File | Description |
-|---|---|
-| `edges.tsv` | Full ranked edge table: TF, gene, signed quantile, stability, partial correlation, inPrior flag |
-| `edges_subset.tsv` | Top edges after applying the `meanEdgesPerGene` cap |
-| `instabOutMat.jld` | Serialised `GrnData` struct with full instability arrays across the λ grid |
-| `instability_diagnostic_network.png` | Two-panel plot: model size vs λ (left) and bStARS instability bounds vs λ (right) |
-| `instability_selection_network.png` | \|Instability − target\| vs λ with dot at the chosen λ |
-| `combined_<method>_sp.tsv` | Aggregated network — long/edge list format (TF, gene, score; no zeros) |
-| `combined_<method>.tsv` | Aggregated network — wide/matrix format (genes × TFs; used as prior input to `refineTFA`) |
+| File | Method | Description |
+|---|---|---|
+| `edges.tsv` | all | Full ranked edge table: TF, gene, signed quantile, stability, partial correlation, inPrior flag |
+| `edges_subset.tsv` | all | Top edges after applying the `meanEdgesPerGene` cap |
+| `grnOutMat.jld` | all | Serialised `BuildGrn` struct (full network object) |
+| `instabOutMat.jld` | bStARS | Serialised `GrnData` struct with full stability arrays across the λ grid |
+| `instability_diagnostic_network.png` | bStARS | Two-panel plot: model size vs λ (left) and instability bounds vs λ (right) |
+| `instability_selection_network.png` | bStARS | \|Instability − target\| vs λ with dot at the chosen λ |
+| `bebicOutMat.jld` | bEBIC | Serialised `GrnData` struct — preserves `lambdaSS` (nGenes × totSS per-subsample lambda matrix) for post-hoc analysis |
+| `bebic_lambda_summary.tsv` | bEBIC | Per-gene median and std of EBIC-optimal lambdas across subsamples |
+| `ebic_lambda_summary.tsv` | EBIC | Per-gene chosen lambda and number of non-zero coefficients at that lambda |
+| `combined_<method>_sp.tsv` | all | Aggregated network — long/edge list format (TF, gene, score; no zeros) |
+| `combined_<method>.tsv` | all | Aggregated network — wide/matrix format (genes × TFs; used as prior input to `refineTFA`) |
 
 ---
 
@@ -140,14 +147,18 @@ All outputs are written under the directory specified by `outputDir`.
 
 | Parameter | Default | Description |
 |---|---|---|
-| `totSS` | 80 | Total bootstrap subsamples for instability estimation |
-| `subsampleFrac` | 0.63 | Fraction of samples drawn per subsample |
-| `targetInstability` | 0.05 | Instability threshold for λ selection |
+| `modelSelection` | `"bStARS"` | Lambda selection method: `"bStARS"` (stability-based, default), `"EBIC"` (single-fit, fast), `"bEBIC"` (bootstrap EBIC, produces bStARS-comparable confidence scores) |
+| `totSS` | 80 | Total bootstrap subsamples (bStARS and bEBIC) |
+| `subsampleFrac` | 0.63 | Fraction of samples drawn per subsample (bStARS and bEBIC) |
+| `targetInstability` | 0.05 | Instability threshold for λ selection (bStARS only) |
+| `gamma` | `0.5` | EBIC sparsity hyperparameter (EBIC and bEBIC only); `0` = standard BIC, `0.5` = recommended for GRN, `1` = maximum sparsity penalty |
+| `minLambda` | `nothing` | Lower bound of the λ grid. For **bStARS**: defaults to `0.01` when `nothing`. For **EBIC/bEBIC**: `nothing` lets GLMNet choose the solution path automatically (recommended). |
+| `maxLambda` | `nothing` | Upper bound of the λ grid. For **bStARS**: defaults to `0.5` when `nothing`. For **EBIC/bEBIC**: `nothing` = auto. |
 | `lambdaBias` | `[0.5]` | Penalty reduction factor for prior-supported edges (0 = no prior, 1 = uniform) |
 | `meanEdgesPerGene` | 20 | Maximum retained edges per target gene |
-| `instabilityLevel` | `"Network"` | `"Network"`: single λ for all genes; `"Gene"`: per-gene λ |
+| `instabilityLevel` | `"Network"` | `"Network"`: single λ for all genes; `"Gene"`: per-gene λ (bStARS only) |
 | `zScoreTFA` | `true` | Z-score expression before TFA estimation |
-| `zScoreLASSO` | `true` | Z-score expression before LASSO regression |
+| `zScoreLASSO` | `true` | Z-score expression before LASSO regression. **Always use `true` with EBIC/bEBIC** unless you supply explicit `minLambda`/`maxLambda`; raw-scale responses inflate λ_max and cause EBIC to select null models |
 | `method` | `:max` | Network aggregation rule: `:max`, `:mean`, or `:min` stability |
 | `timeLagFile` | `""` | Path to 4-column TSV (sampleQ, timeQ, sampleP, timeP) for time-lag correction; `""` skips step 3b |
 | `timeLag` | `0.0` | Lag between TF mRNA and protein activity, in the same time units as `timeLagFile` |
@@ -171,6 +182,29 @@ buildNetwork(data, priorData; tfaMode=true, totSS=80, lambdaBias=[0.5], ...)
 aggregateNetworks(netFiles; method=:max, meanEdgesPerGene=20, outputDir=".")
 refineTFA(combinedNetFile, data, mergedTFs; zScoreTFA=true, outputDir=".")
 ```
+
+### Internal — bEBIC two-stage (dev scripts only)
+
+`buildNetwork` calls these internally when `modelSelection = "bEBIC"`. Use them
+directly in dev scripts when you need to inspect `grnData.lambdaSS` between
+stages or swap in a custom aggregation function.
+
+```julia
+# Stage 1 — expensive: LASSO on every subsample per gene, EBIC selects optimal λ
+# Fills: grnData.lambdaSS (nGenes × totSS), buildGrn.networkStability (selection counts)
+constructSubsamples(data, grnData; totSS=80, subsampleFrac=0.63)
+bebicEstimateLambdas!(grnData, buildGrn; gamma=0.5, zScoreLASSO=true)
+
+# Stage 2 — cheap: aggregate per-subsample λ → one per gene, final full-data fit
+# Fills: buildGrn.lambda, buildGrn.betas, grnData.ebicLambdas
+# aggregateFn: any AbstractVector → Real function (default median)
+bebicFinalFit!(grnData, buildGrn; aggregateFn=median, zScoreLASSO=true, outputDir=".")
+```
+
+Splitting the stages means `bebicFinalFit!` can be re-run with a different
+`aggregateFn` (e.g. `mean`, `x -> quantile(x, 0.25)`) without repeating the
+expensive subsample fits. `gamma` is applied in Stage 1 — changing it requires
+re-running `bebicEstimateLambdas!`.
 
 ### Evaluation
 ```julia
@@ -248,7 +282,7 @@ saveData(data, tfaData, grnData, buildGrn, dir, "checkpoint.jld2")
 | `GeneExpressionData` | `loadData` | `geneExpressionMat`, `geneNames`, `cellLabels`, `targGenes`, `potRegs` |
 | `PriorTFAData` | `loadPrior`, `estimateTFA` | `priorMatrix`, `medTfas`, `pRegs`, `pTargs` |
 | `mergedTFsResult` | `loadPrior` | `mergedPrior`, `mergedTFMap` |
-| `GrnData` | `buildNetwork` internals | `predictorMat`, `penaltyMat`, `allPredictors`, `subsamps`, `trainInds`, `stabilityMat`, `targGenes` |
+| `GrnData` | `buildNetwork` internals | `predictorMat`, `penaltyMat`, `allPredictors`, `subsamps`, `trainInds`, `stabilityMat`, `targGenes`; bEBIC adds `lambdaSS` (nGenes × totSS), `ebicLambdas` (per-gene median λ) |
 | `BuildGrn` | `buildNetwork` | `networkMat`, `networkMatSubset` |
 
 ---

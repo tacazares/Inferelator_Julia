@@ -55,8 +55,8 @@ function runInferelator(;
     totSS::Int                      = 80,
     bstarsTotSS::Int                = 5,
     subsampleFrac::Float64          = 0.68,
-    minLambda::Float64              = 0.01,
-    maxLambda::Float64              = 0.5,
+    minLambda::Union{Float64, Nothing} = nothing,
+    maxLambda::Union{Float64, Nothing} = nothing,
     totLambdasBstars::Int           = 20,
     totLambdas::Int                 = 40,
     targetInstability::Float64      = 0.05,
@@ -65,8 +65,10 @@ function runInferelator(;
     minTargets::Int                 = 3,
     edgeSS::Int                     = 0,
     lambdaBias::Vector{Float64}     = [0.5],
-    instabilityLevel::String        = "Network",  # "Network" or "Gene"
-    useMeanEdgesPerGeneMode::Bool   = true,       
+    modelSelection::String          = "bStARS",   # "bStARS", "EBIC", or "bEBIC"
+    gamma::Float64                  = 0.5,         # EBIC sparsity penalty (EBIC / bEBIC only)
+    instabilityLevel::String        = "Network",  # "Network" or "Gene"  (bStARS only)
+    useMeanEdgesPerGeneMode::Bool   = true,
     combineOpt::String              = "max",       # "max", "mean", or "min"
     zScoreTFA::Bool                 = true,
     zScoreLASSO::Bool               = true,
@@ -74,37 +76,67 @@ function runInferelator(;
     timeLag::Real                   = 0.0,   # lag value in same units as timeLagFile (e.g. hours)
     suffix::String                  = ""     # optional custom label appended to output dir, e.g. "_5KBTSS"
 )
-    # Build output directory name (encodes key run parameters)
-    subsamplePct    = subsampleFrac * 100
-    subsampleStr    = isinteger(subsamplePct) ? string(Int(subsamplePct)) : replace(string(subsamplePct), "." => "p")
-    lambdaStr       = join(replace.(string.(lambdaBias), "." => "p"), "_")
-    zTFAStr         = zScoreTFA   ? "" : "_noZscoreTFA"
-    zLASSOStr       = zScoreLASSO ? "" : "_noZscoreLASSO"
-    networkBaseName = lowercase(instabilityLevel) * "Lambda" * lambdaStr * "_" * string(totSS) * "totSS_" *
-                      string(meanEdgesPerGene) * "tfsPerGene_" * "subsamplePCT" * subsampleStr *
-                      "_" * combineOpt * zTFAStr * zLASSOStr * suffix
+    # Build output directory name (encodes method and key run parameters)
+    subsamplePct = subsampleFrac * 100
+    subsampleStr = isinteger(subsamplePct) ? string(Int(subsamplePct)) : replace(string(subsamplePct), "." => "p")
+    lambdaStr    = join(replace.(string.(lambdaBias), "." => "p"), "_")
+    zTFAStr      = zScoreTFA   ? "" : "_noZscoreTFA"
+    zLASSOStr    = zScoreLASSO ? "" : "_noZscoreLASSO"
+    gammaStr     = replace(string(gamma), "." => "p")
+
+    methodStr = if modelSelection == "bStARS"
+        lowercase(instabilityLevel) * "Lambda_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
+    elseif modelSelection == "bEBIC"
+        "bEBIC_gamma" * gammaStr * "_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
+    elseif modelSelection == "EBIC"
+        "EBIC_gamma" * gammaStr
+    end
+
+    networkBaseName = methodStr * "_" * lambdaStr * "_" *
+                      string(meanEdgesPerGene) * "tfsPerGene_" *
+                      combineOpt * zTFAStr * zLASSOStr * suffix
     dirOut = joinpath(outputDir, networkBaseName)
     mkpath(dirOut)
 
     # Save all run parameters for reproducibility
+    _j(::Nothing)         = "null"
+    _j(x::Bool)           = x ? "true" : "false"
+    _j(x::AbstractString) = "\"" * replace(x, "\\" => "\\\\", "\"" => "\\\"") * "\""
+    _j(x::AbstractVector) = "[" * join(_j.(x), ", ") * "]"
+    _j(x)                 = string(x)
+
     open(joinpath(dirOut, "run_params.json"), "w") do io
         write(io, """{
-  "timestamp":               "$(Dates.now())",
-  "geneExprFile":            "$(geneExprFile)",
-  "targFile":                "$(targFile)",
-  "regFile":                 "$(regFile)",
-  "priorFile":               "$(priorFile)",
-  "lambdaBias":              $(lambdaBias),
-  "totSS":                   $(totSS),
-  "bstarsTotSS":             $(bstarsTotSS),
-  "subsampleFrac":           $(subsampleFrac),
-  "targetInstability":       $(targetInstability),
-  "meanEdgesPerGene":        $(meanEdgesPerGene),
-  "instabilityLevel":        "$(instabilityLevel)",
-  "useMeanEdgesPerGeneMode": $(useMeanEdgesPerGeneMode),
-  "combineOpt":              "$(combineOpt)",
-  "zScoreTFA":               $(zScoreTFA),
-  "zScoreLASSO":             $(zScoreLASSO)
+  "timestamp":               "$( Dates.now()               )",
+  "geneExprFile":            $( _j(geneExprFile)            ),
+  "targFile":                $( _j(targFile)                ),
+  "regFile":                 $( _j(regFile)                 ),
+  "priorFile":               $( _j(priorFile)               ),
+  "priorFilePenalties":      $( _j(priorFilePenalties)      ),
+  "tfaGeneFile":             $( _j(tfaGeneFile)             ),
+  "modelSelection":          $( _j(modelSelection)          ),
+  "gamma":                   $( _j(gamma)                   ),
+  "lambdaBias":              $( _j(lambdaBias)              ),
+  "minLambda":               $( _j(minLambda)               ),
+  "maxLambda":               $( _j(maxLambda)               ),
+  "totSS":                   $( _j(totSS)                   ),
+  "bstarsTotSS":             $( _j(bstarsTotSS)             ),
+  "totLambdasBstars":        $( _j(totLambdasBstars)        ),
+  "totLambdas":              $( _j(totLambdas)              ),
+  "subsampleFrac":           $( _j(subsampleFrac)           ),
+  "targetInstability":       $( _j(targetInstability)       ),
+  "meanEdgesPerGene":        $( _j(meanEdgesPerGene)        ),
+  "correlationWeight":       $( _j(correlationWeight)       ),
+  "instabilityLevel":        $( _j(instabilityLevel)        ),
+  "useMeanEdgesPerGeneMode": $( _j(useMeanEdgesPerGeneMode) ),
+  "combineOpt":              $( _j(combineOpt)              ),
+  "minTargets":              $( _j(minTargets)              ),
+  "edgeSS":                  $( _j(edgeSS)                  ),
+  "zScoreTFA":               $( _j(zScoreTFA)               ),
+  "zScoreLASSO":             $( _j(zScoreLASSO)             ),
+  "timeLagFile":             $( _j(timeLagFile)             ),
+  "timeLag":                 $( _j(timeLag)                 ),
+  "suffix":                  $( _j(suffix)                  )
 }""")
     end
 
@@ -151,6 +183,8 @@ function runInferelator(;
                      useMeanEdgesPerGeneMode = useMeanEdgesPerGeneMode,
                      zScoreLASSO             = zScoreLASSO,
                      mergedTFsData           = mergedTFs,
+                     modelSelection          = modelSelection,
+                     gamma                   = gamma,
                      outputDir               = instabilitiesDir)
     end
 
