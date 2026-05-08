@@ -116,10 +116,9 @@ Use `writeEBICLambdaTable!` to write these to a TSV file.
                  choose its own solution path automatically (recommended).
 - `maxLambda`  : Upper bound of the lambda grid. `nothing` (default) lets GLMNet
                  choose its own solution path automatically (recommended).
-- `totLambdas` : Number of grid points when `minLambda`/`maxLambda` are
-                 user-supplied (default 100). Ignored when either bound is
-                 `nothing`. Grid is linear by default; see inline comment in
-                 source for a log-spaced alternative.
+- `totLambdas` : Number of log-spaced grid points (default 100). When
+                 `minLambda`/`maxLambda` are `nothing`, bounds are computed
+                 from data per gene as `max|X'y|/n` and `eps × lambda_max`.
 - `zScoreLASSO`: Z-score predictors and (optionally) response before fitting (default true)
 
 # Notes
@@ -150,17 +149,6 @@ function ebicSelect!(
         responsePredInds[res] = findall(x -> x != Inf, grnData.penaltyMat[res, :])
     end
 
-    # Warn when response is not z-scored: lambda_max scales with response magnitude,
-    # so GLMNet's auto-chosen grid will be much larger than the bStARS range.
-    # EBIC may then select an overly sparse (or null) model.
-    # Fix: set zScoreLASSO=true, or supply minLambda/maxLambda explicitly.
-    if !zScoreLASSO && isnothing(minLambda)
-        @warn "ebicSelect!: zScoreLASSO=false and no minLambda/maxLambda supplied. " *
-              "The response is on its raw scale while predictors are z-scored, so " *
-              "lambda_max ∝ response magnitude and GLMNet's auto grid may be very large. " *
-              "EBIC is likely to select an overly sparse model. " *
-              "Recommended fix: set zScoreLASSO=true, or pass minLambda/maxLambda."
-    end
 
     networkStability  = zeros(totResponses, totPredictors)
     betas_out         = zeros(totResponses, totPredictors)
@@ -190,22 +178,18 @@ function ebicSelect!(
             currResponses = grnData.responseMat[res, :]
         end
 
-        # Fit LASSO: use user-supplied range or let GLMNet choose
-        if minLambda !== nothing && maxLambda !== nothing
-            lambdaGrid = reverse(collect(range(minLambda, maxLambda, length = totLambdas)))
-            # Log-spaced alternative — concentrates steps in the low-lambda region
-            # where EBIC typically finds its minimum, matching GLMNet's auto path.
-            # Swap in if linear grid undersamples the optimal region:
-            # lambdaGrid = reverse(exp.(range(log(minLambda), log(maxLambda), length = totLambdas)))
-            lsoln = glmnet(currPreds, vec(currResponses);
-                           penalty_factor = penaltyFactor,
-                           lambda         = lambdaGrid,
-                           alpha          = 1.0)
-        else
-            lsoln = glmnet(currPreds, vec(currResponses);
-                           penalty_factor = penaltyFactor,
-                           alpha          = 1.0)
-        end
+        # Build log-spaced lambda grid: use user bounds if provided, else compute from data
+        lMax       = maxLambda !== nothing ? Float64(maxLambda) :
+                     maximum(abs.(Matrix(currPreds)' * vec(currResponses))) / nSamples
+        eps        = nSamples > p ? 0.001 : 0.01
+        lMin       = minLambda !== nothing ? Float64(minLambda) : eps * lMax
+        lambdaGrid = reverse(exp.(range(log(lMin), log(lMax), length = totLambdas)))
+
+        lsoln = glmnet(currPreds, vec(currResponses);
+                       penalty_factor = penaltyFactor,
+                       lambda         = lambdaGrid,
+                       alpha          = 1.0,
+                       standardize    = false)
 
         # Select lambda at minimum EBIC
         ebicScores = computeEBIC(lsoln.betas, vec(currResponses), Matrix(currPreds),
@@ -213,13 +197,11 @@ function ebicSelect!(
         bestInd   = argmin(ebicScores)
         bestCoefs = vec(lsoln.betas[:, bestInd])
 
-        # Boundary detection (only meaningful on a user-supplied grid)
-        if minLambda !== nothing && maxLambda !== nothing
-            if bestInd == 1
-                upperBoundaryHits[res] = 1   # optimum at most-regularised end → maxLambda too small
-            elseif bestInd == length(lsoln.lambda)
-                lowerBoundaryHits[res] = 1   # optimum at least-regularised end → minLambda too large
-            end
+        # Boundary detection — always active since we always build our own grid
+        if bestInd == 1
+            upperBoundaryHits[res] = 1   # optimum at most-regularised end → lMax too small
+        elseif bestInd == length(lsoln.lambda)
+            lowerBoundaryHits[res] = 1   # optimum at least-regularised end → lMin too large
         end
 
         ebicLambdas[res]                = lsoln.lambda[bestInd]
@@ -229,19 +211,15 @@ function ebicSelect!(
     end
 
     # Boundary warnings — fired once after the loop with aggregate counts
-    if minLambda !== nothing && maxLambda !== nothing
-        nUpper = sum(upperBoundaryHits)
-        nLower = sum(lowerBoundaryHits)
-        if nUpper > 0
-            @warn "ebicSelect!: EBIC minimum at upper boundary (maxLambda=$maxLambda) " *
-                  "for $nUpper / $totResponses genes. True optimum may lie above maxLambda — " *
-                  "consider increasing maxLambda or setting it to nothing for automatic path selection."
-        end
-        if nLower > 0
-            @warn "ebicSelect!: EBIC minimum at lower boundary (minLambda=$minLambda) " *
-                  "for $nLower / $totResponses genes. True optimum may lie below minLambda — " *
-                  "consider decreasing minLambda or setting it to nothing for automatic path selection."
-        end
+    nUpper = sum(upperBoundaryHits)
+    nLower = sum(lowerBoundaryHits)
+    if nUpper > 0
+        @warn "ebicSelect!: EBIC minimum at upper boundary for $nUpper / $totResponses genes. " *
+              "True optimum may lie above lambda_max — consider increasing maxLambda."
+    end
+    if nLower > 0
+        @warn "ebicSelect!: EBIC minimum at lower boundary for $nLower / $totResponses genes. " *
+              "True optimum may lie below lambda_min — consider decreasing minLambda."
     end
 
     # Zero-out Inf entries (illegal TF-gene pairs)
@@ -277,12 +255,14 @@ the final full-data fit.
 - `gamma`      : EBIC hyperparameter (default 0.5; see `computeEBIC`)
 - `minLambda`  : Lower bound of the lambda grid. `nothing` (default) lets GLMNet
                  choose its own solution path automatically (recommended).
-- `maxLambda`  : Upper bound of the lambda grid. `nothing` lets GLMNet choose.
-- `totLambdas` : Number of grid points when `minLambda`/`maxLambda` are supplied
-                 (default 100). Ignored when either bound is `nothing`. Grid is
-                 linear by default; see inline comment in source for a log-spaced
-                 alternative.
+- `maxLambda`  : Upper bound of the lambda grid. `nothing` computes from data
+                 as `max|X'y|/n` per subsample.
+- `totLambdas` : Number of log-spaced grid points per subsample (default 100).
+                 When bounds are `nothing`, computed from data automatically.
 - `zScoreLASSO`: Z-score predictors before each subsample fit (default true)
+- `outputDir`  : If set, saves `bebicOutMat.jld` (full `GrnData` struct, preserves
+                 `lambdaSS`) and `bebic_lambda_summary.tsv` (per-gene median ± std).
+                 Default `nothing`.
 
 # Fills
 - `grnData.lambdaSS`          : `totResponses × totSS` matrix — the EBIC-optimal
@@ -298,6 +278,8 @@ the final full-data fit.
   this function (not just `bebicFinalFit!`).
 - Unlike pure EBIC, bEBIC produces a selection-count confidence score (0–totSS)
   matching the output scale of bStARS.
+- `bebicFinalFit!` is no longer required by the standard pipeline. Call it only
+  if you need signed full-data LASSO coefficients for post-hoc analysis.
 """
 function bebicEstimateLambdas!(
     grnData::GrnData,
@@ -306,7 +288,8 @@ function bebicEstimateLambdas!(
     minLambda::Union{Float64, Nothing} = nothing,
     maxLambda::Union{Float64, Nothing} = nothing,
     totLambdas::Int                    = 100,
-    zScoreLASSO::Bool                  = true
+    zScoreLASSO::Bool                  = true,
+    outputDir::Union{String, Nothing}  = nothing
 )
     totResponses  = size(grnData.responseMat, 1)
     totPredictors = size(grnData.predictorMat, 1)
@@ -358,19 +341,18 @@ function bebicEstimateLambdas!(
                 currResponses = grnData.responseMat[res, subsamp]
             end
 
-            if minLambda !== nothing && maxLambda !== nothing
-                lambdaGrid = reverse(collect(range(minLambda, maxLambda, length = totLambdas)))
-                # Log-spaced alternative — swap in if linear grid undersamples the optimal region:
-                # lambdaGrid = reverse(exp.(range(log(minLambda), log(maxLambda), length = totLambdas)))
-                lsoln = glmnet(currPreds, vec(currResponses);
-                               penalty_factor = penaltyFactor,
-                               lambda         = lambdaGrid,
-                               alpha          = 1.0)
-            else
-                lsoln = glmnet(currPreds, vec(currResponses);
-                               penalty_factor = penaltyFactor,
-                               alpha          = 1.0)
-            end
+            # Build log-spaced lambda grid: use user bounds if provided, else compute from data
+            lMax       = maxLambda !== nothing ? Float64(maxLambda) :
+                         maximum(abs.(Matrix(currPreds)' * vec(currResponses))) / nSS
+            eps        = nSS > p ? 0.001 : 0.01
+            lMin       = minLambda !== nothing ? Float64(minLambda) : eps * lMax
+            lambdaGrid = reverse(exp.(range(log(lMin), log(lMax), length = totLambdas)))
+
+            lsoln = glmnet(currPreds, vec(currResponses);
+                           penalty_factor = penaltyFactor,
+                           lambda         = lambdaGrid,
+                           alpha          = 1.0,
+                           standardize    = false)
 
             ebicScores         = computeEBIC(lsoln.betas, vec(currResponses),
                                              Matrix(currPreds), nSS, p; gamma = gamma)
@@ -379,13 +361,11 @@ function bebicEstimateLambdas!(
             # Binary selection at this subsample's EBIC-optimal lambda
             ssSelections[ss, :] = Float64.(vec(lsoln.betas[:, bestInd]) .!= 0)
 
-            # Boundary detection (only meaningful on a user-supplied grid)
-            if minLambda !== nothing && maxLambda !== nothing
-                if bestInd == 1
-                    upperHits += 1   # optimum at most-regularised end → maxLambda too small
-                elseif bestInd == length(lsoln.lambda)
-                    lowerHits += 1   # optimum at least-regularised end → minLambda too large
-                end
+            # Boundary detection — always active since we always build our own grid
+            if bestInd == 1
+                upperHits += 1   # optimum at most-regularised end → lMax too small
+            elseif bestInd == length(lsoln.lambda)
+                lowerHits += 1   # optimum at least-regularised end → lMin too large
             end
         end
 
@@ -402,23 +382,19 @@ function bebicEstimateLambdas!(
     end
 
     # Boundary warnings — fired once after the loop with aggregate counts
-    if minLambda !== nothing && maxLambda !== nothing
-        totUpperFits = sum(upperBoundaryHits)
-        totLowerFits = sum(lowerBoundaryHits)
-        nUpperGenes  = sum(upperBoundaryHits .> 0)
-        nLowerGenes  = sum(lowerBoundaryHits .> 0)
-        if totUpperFits > 0
-            @warn "bebicEstimateLambdas!: EBIC minimum at upper boundary (maxLambda=$maxLambda) " *
-                  "in $totUpperFits gene×subsample fits ($nUpperGenes / $totResponses genes affected). " *
-                  "True optimum may lie above maxLambda — consider increasing maxLambda or " *
-                  "setting it to nothing for automatic path selection."
-        end
-        if totLowerFits > 0
-            @warn "bebicEstimateLambdas!: EBIC minimum at lower boundary (minLambda=$minLambda) " *
-                  "in $totLowerFits gene×subsample fits ($nLowerGenes / $totResponses genes affected). " *
-                  "True optimum may lie below minLambda — consider decreasing minLambda or " *
-                  "setting it to nothing for automatic path selection."
-        end
+    totUpperFits = sum(upperBoundaryHits)
+    totLowerFits = sum(lowerBoundaryHits)
+    nUpperGenes  = sum(upperBoundaryHits .> 0)
+    nLowerGenes  = sum(lowerBoundaryHits .> 0)
+    if totUpperFits > 0
+        @warn "bebicEstimateLambdas!: EBIC minimum at upper boundary " *
+              "in $totUpperFits gene×subsample fits ($nUpperGenes / $totResponses genes affected). " *
+              "True optimum may lie above lambda_max — consider increasing maxLambda."
+    end
+    if totLowerFits > 0
+        @warn "bebicEstimateLambdas!: EBIC minimum at lower boundary " *
+              "in $totLowerFits gene×subsample fits ($nLowerGenes / $totResponses genes affected). " *
+              "True optimum may lie below lambda_min — consider decreasing minLambda."
     end
 
     # Zero-out Inf entries
@@ -429,6 +405,13 @@ function bebicEstimateLambdas!(
     buildGrn.networkStability = networkStability
     grnData.lambdaSS          = lambdaSSMat
 
+    if !isnothing(outputDir) && outputDir != ""
+        # Save full grnData — preserves lambdaSS (nGenes × totSS per-subsample
+        # lambda matrix) which cannot be reconstructed from the TSV summary alone.
+        save_object(joinpath(outputDir, "bebicOutMat.jld"), grnData)
+        writeBEBICLambdaTable!(grnData; outputDir = outputDir)
+    end
+
     @info "bEBIC: subsample lambda estimation complete" genesProcessed=totResponses totSubsamples=totSS
 end
 
@@ -436,8 +419,17 @@ end
 """
     bebicFinalFit!(grnData, buildGrn; kwargs...)
 
-Aggregate the per-subsample EBIC-optimal lambdas (stored in `grnData.lambdaSS`)
-into one lambda per gene, then perform a final full-data LASSO fit at that lambda.
+**Optional post-hoc function** — not required by the standard bEBIC pipeline.
+
+`rankEdges!` derives edge confidence from `buildGrn.networkStability` (selection
+counts from `bebicEstimateLambdas!`) and uses partial correlation for edge sign.
+`buildGrn.betas` produced here is not read by `rankEdges!`.
+
+Call this only when you specifically need signed full-data LASSO coefficients for
+post-hoc analysis (e.g. effect-size estimates, export to external tools).
+
+Aggregates per-subsample EBIC-optimal lambdas (from `grnData.lambdaSS`) into one
+lambda per gene, then performs a final full-data LASSO fit at that lambda.
 
 Must be called after `bebicEstimateLambdas!`.
 
@@ -447,11 +439,8 @@ Must be called after `bebicEstimateLambdas!`.
 - `aggregateFn` : Function applied row-wise to `lambdaSS` to produce one lambda
                   per gene (default `median`). Pass any `AbstractVector → Real`
                   function, e.g. `mean`, `x -> quantile(x, 0.25)`.
-- `zScoreLASSO` : Z-score predictors before fitting (default true; should match
-                  the value used in `bebicEstimateLambdas!`)
-- `outputDir`   : If set, saves `bebicOutMat.jld` (full `GrnData` struct, preserves
-                  `lambdaSS`) and `bebic_lambda_summary.tsv` (per-gene median ± std).
-                  Default `nothing`.
+- `zScoreLASSO` : Z-score predictors before fitting (default false; match the value
+                  used in `bebicEstimateLambdas!`)
 
 # Fills
 - `buildGrn.betas`      : signed coefficients at the aggregated lambda per gene
@@ -459,19 +448,16 @@ Must be called after `bebicEstimateLambdas!`.
 - `grnData.ebicLambdas` : same as `buildGrn.lambda`
 
 # Notes
-- Only the aggregation strategy (`aggregateFn`) and the final fit are performed
-  here. Re-running with a different `aggregateFn` (e.g. `mean` instead of
-  `median`) is cheap — the expensive subsample fits in `bebicEstimateLambdas!`
-  do not need to be repeated.
-- `gamma` does not appear here because EBIC scoring (which uses `gamma`) is done
-  in `bebicEstimateLambdas!`.
+- Diagnostic output (`bebicOutMat.jld`, `bebic_lambda_summary.tsv`) is now written
+  by `bebicEstimateLambdas!` when `outputDir` is provided — no need to call this
+  function just for diagnostics.
+- `gamma` does not appear here; EBIC scoring is done in `bebicEstimateLambdas!`.
 """
 function bebicFinalFit!(
     grnData::GrnData,
     buildGrn::BuildGrn;
-    aggregateFn::Function             = median,
-    zScoreLASSO::Bool                 = true,
-    outputDir::Union{String, Nothing} = nothing
+    aggregateFn::Function = median,
+    zScoreLASSO::Bool     = false
 )
     totResponses  = size(grnData.responseMat, 1)
     totPredictors = size(grnData.predictorMat, 1)
@@ -505,7 +491,8 @@ function bebicFinalFit!(
         lsoln = glmnet(fullPreds, vec(fullResponses);
                        penalty_factor = penaltyFactor,
                        lambda         = [finalLambda],
-                       alpha          = 1.0)
+                       alpha          = 1.0,
+                       standardize    = false)
         betas_out[res, predInds] = vec(lsoln.betas[:, 1])
     end
 
@@ -513,14 +500,6 @@ function bebicFinalFit!(
     buildGrn.betas      = betas_out
     grnData.ebicLambdas = ebicLambdas
 
-    if !isnothing(outputDir) && outputDir != ""
-        # Save full grnData — preserves lambdaSS (nGenes × totSS per-subsample
-        # lambda matrix) which cannot be reconstructed from the TSV summary alone.
-        save_object(joinpath(outputDir, "bebicOutMat.jld"), grnData)
-        # Write per-gene lambda summary TSV (median + std across subsamples).
-        writeBEBICLambdaTable!(grnData, buildGrn; outputDir = outputDir)
-    end
-
     totSS = size(grnData.lambdaSS, 2)
-    @info "bEBIC complete" genesProcessed=totResponses lambdaMedian=median(ebicLambdas) lambdaMin=minimum(ebicLambdas) lambdaMax=maximum(ebicLambdas) totSubsamples=totSS
+    @info "bEBIC final fit complete" genesProcessed=totResponses lambdaMedian=median(ebicLambdas) lambdaMin=minimum(ebicLambdas) lambdaMax=maximum(ebicLambdas) totSubsamples=totSS
 end

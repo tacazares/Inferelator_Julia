@@ -152,13 +152,13 @@ All outputs are written under the directory specified by `outputDir`.
 | `subsampleFrac` | 0.63 | Fraction of samples drawn per subsample (bStARS and bEBIC) |
 | `targetInstability` | 0.05 | Instability threshold for λ selection (bStARS only) |
 | `gamma` | `0.5` | EBIC sparsity hyperparameter (EBIC and bEBIC only); `0` = standard BIC, `0.5` = recommended for GRN, `1` = maximum sparsity penalty |
-| `minLambda` | `nothing` | Lower bound of the λ grid. For **bStARS**: defaults to `0.01` when `nothing`. For **EBIC/bEBIC**: `nothing` lets GLMNet choose the solution path automatically (recommended). |
-| `maxLambda` | `nothing` | Upper bound of the λ grid. For **bStARS**: defaults to `0.5` when `nothing`. For **EBIC/bEBIC**: `nothing` = auto. |
+| `minLambda` | `nothing` | Lower bound of the λ grid. `nothing` = auto-computed per gene as `max\|X'y\|/n × ε`. Pass a `Float64` to fix the lower bound manually. |
+| `maxLambda` | `nothing` | Upper bound of the λ grid. `nothing` = auto-computed per gene as `max\|X'y\|/n`. Pass a `Float64` to fix the upper bound manually. |
 | `lambdaBias` | `[0.5]` | Penalty reduction factor for prior-supported edges (0 = no prior, 1 = uniform) |
 | `meanEdgesPerGene` | 20 | Maximum retained edges per target gene |
 | `instabilityLevel` | `"Network"` | `"Network"`: single λ for all genes; `"Gene"`: per-gene λ (bStARS only) |
-| `zScoreTFA` | `true` | Z-score expression before TFA estimation |
-| `zScoreLASSO` | `true` | Z-score expression before LASSO regression. **Always use `true` with EBIC/bEBIC** unless you supply explicit `minLambda`/`maxLambda`; raw-scale responses inflate λ_max and cause EBIC to select null models |
+| `zScoreTFA` | `false` | Z-score expression before TFA estimation |
+| `zScoreLASSO` | `false` | Z-score expression before LASSO regression. Set `true` to z-score the response; note that empirically z-scoring can be required for EBIC/bEBIC to avoid null models on some datasets |
 | `method` | `:max` | Network aggregation rule: `:max`, `:mean`, or `:min` stability |
 | `timeLagFile` | `""` | Path to 4-column TSV (sampleQ, timeQ, sampleP, timeP) for time-lag correction; `""` skips step 3b |
 | `timeLag` | `0.0` | Lag between TF mRNA and protein activity, in the same time units as `timeLagFile` |
@@ -176,35 +176,36 @@ priorData, mergedTFs    = loadPrior(data, priorFile; minTargets=3)
 
 ### Core pipeline
 ```julia
-estimateTFA(priorData, data; edgeSS=0, zScoreTFA=true, outputDir=".")
+estimateTFA(priorData, data; edgeSS=0, zScoreTFA=false, outputDir=".")
 applyTimeLag(priorData, data, timeLagFile, timeLag)          # optional step 3b
 buildNetwork(data, priorData; tfaMode=true, totSS=80, lambdaBias=[0.5], ...)
 aggregateNetworks(netFiles; method=:max, meanEdgesPerGene=20, outputDir=".")
-refineTFA(combinedNetFile, data, mergedTFs; zScoreTFA=true, outputDir=".")
+refineTFA(combinedNetFile, data, mergedTFs; zScoreTFA=false, outputDir=".")
 ```
 
-### Internal — bEBIC two-stage (dev scripts only)
+### Internal — bEBIC (dev scripts only)
 
 `buildNetwork` calls these internally when `modelSelection = "bEBIC"`. Use them
-directly in dev scripts when you need to inspect `grnData.lambdaSS` between
-stages or swap in a custom aggregation function.
+directly in dev scripts when you need to inspect `grnData.lambdaSS` or pass a
+custom `outputDir`.
 
 ```julia
-# Stage 1 — expensive: LASSO on every subsample per gene, EBIC selects optimal λ
+# Expensive step: LASSO on every subsample per gene, EBIC selects optimal λ
 # Fills: grnData.lambdaSS (nGenes × totSS), buildGrn.networkStability (selection counts)
+# Writes bebicOutMat.jld + bebic_lambda_summary.tsv when outputDir is set
 constructSubsamples(data, grnData; totSS=80, subsampleFrac=0.63)
-bebicEstimateLambdas!(grnData, buildGrn; gamma=0.5, zScoreLASSO=true)
-
-# Stage 2 — cheap: aggregate per-subsample λ → one per gene, final full-data fit
-# Fills: buildGrn.lambda, buildGrn.betas, grnData.ebicLambdas
-# aggregateFn: any AbstractVector → Real function (default median)
-bebicFinalFit!(grnData, buildGrn; aggregateFn=median, zScoreLASSO=true, outputDir=".")
+bebicEstimateLambdas!(grnData, buildGrn; gamma=0.5, zScoreLASSO=false, outputDir=".")
 ```
 
-Splitting the stages means `bebicFinalFit!` can be re-run with a different
-`aggregateFn` (e.g. `mean`, `x -> quantile(x, 0.25)`) without repeating the
-expensive subsample fits. `gamma` is applied in Stage 1 — changing it requires
-re-running `bebicEstimateLambdas!`.
+`bebicFinalFit!` is **optional** — it performs a final full-data LASSO fit to
+produce signed coefficients (`buildGrn.betas`), which `rankEdges!` does not use.
+Call it only if you need LASSO effect-size estimates for post-hoc analysis:
+
+```julia
+# Optional post-hoc: aggregate per-subsample λ → one per gene, final full-data fit
+# Fills: buildGrn.lambda, buildGrn.betas, grnData.ebicLambdas
+bebicFinalFit!(grnData, buildGrn; aggregateFn=median, zScoreLASSO=false)
+```
 
 ### Evaluation
 ```julia
