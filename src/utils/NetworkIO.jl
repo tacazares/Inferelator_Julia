@@ -11,22 +11,22 @@ function saveData(expressionData, tfaData, grnData, buildGrn, outputDir::String,
 end
 
 """
-    writeBEBICLambdaTable!(grnData, buildGrn; outputDir)
+    writeBEBICLambdaTable!(grnData; outputDir)
 
 Write a per-gene bEBIC lambda diagnostic TSV to `outputDir/bebic_lambda_summary.tsv`.
 
 Columns:
 - `gene`          : target gene name
-- `median_lambda` : median EBIC-optimal lambda across subsamples (== `buildGrn.lambda[i]`)
+- `median_lambda` : median EBIC-optimal lambda across subsamples
 - `std_lambda`    : standard deviation of per-subsample EBIC-optimal lambdas —
                     high values indicate that EBIC is choosing very different
                     regularisation levels across subsamples for that gene
 
-Requires `bebicEstimateLambdas!` + `bebicFinalFit!` to have been called first (populates `grnData.lambdaSS`).
+Requires `bebicEstimateLambdas!` to have been called first (populates `grnData.lambdaSS`).
 """
-function writeBEBICLambdaTable!(grnData::GrnData, buildGrn::BuildGrn; outputDir::String)
+function writeBEBICLambdaTable!(grnData::GrnData; outputDir::String)
     genes         = grnData.targGenes
-    medianLambdas = vec(buildGrn.lambda)   # already the per-gene median
+    medianLambdas = vec(median(grnData.lambdaSS, dims=2))
     stdLambdas    = [std(grnData.lambdaSS[i, :]) for i in 1:length(genes)]
 
     lines = ["gene\tmedian_lambda\tstd_lambda"]

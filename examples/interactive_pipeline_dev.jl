@@ -69,13 +69,10 @@ instabilityLevel  = "Network"  # "Network": one shared λ across all genes
                                # "Gene"   : per-gene λ — slower, more flexible
 
 # --- Lambda grid -------------------------------------------------------------
-minLambda        = 0.01  # search range lower bound  (all methods)
-maxLambda        = 0.5   # search range upper bound  (all methods)
-totLambdasBstars = 20    # grid points in warm-start pass       (bStARS only)
-totLambdas       = 40    # grid points in full stability pass   (bStARS)
-                         # also used by EBIC / bEBIC when minLambda/maxLambda are set;
-                         # leave minLambda/maxLambda as nothing to let GLMNet choose its
-                         # own solution path automatically (recommended for EBIC / bEBIC)
+minLambda        = nothing  # lower bound (nothing = auto-computed per gene as max|X'y|/n × eps)
+maxLambda        = nothing  # upper bound (nothing = auto-computed per gene as max|X'y|/n)
+totLambdasBstars = 20       # grid points in warm-start pass  (bStARS only)
+totLambdas       = 100      # grid points in full estimation pass (log-spaced; all methods)
 # --- Network structure
 meanEdgesPerGene     = 20          # average TF regulators retained per target gene
 useMeanEdgesPerGeneMode = true     # true : keep meanEdgesPerGene × nGenes edges total
@@ -87,8 +84,8 @@ lambdaBias           = [0.5]       # prior penalty weight(s): 0 = ignore prior, 
 # --- Data processing
 minTargets           = 3           # minimum targets a TF must regulate in the prior to be retained
 edgeSS               = 0           # TFA edge subsampling replicates; 0 = no subsampling
-zScoreTFA            = true        # z-score target expression before TFA estimation
-zScoreLASSO          = true        # z-score target expression before LASSO regression
+zScoreTFA            = false       # z-score target expression before TFA estimation
+zScoreLASSO          = false       # z-score target expression before LASSO regression
 timeLagFile          = ""          # path to 4-column time-lag TSV; "" skips step 3b
 timeLag              = 0.0         # lag value in same units as timeLagFile (e.g. hours)
 
@@ -269,19 +266,17 @@ for tfaOpt in tfaOptions
                                    zScoreLASSO = zScoreLASSO)
                                    
     elseif modelSelection == "bEBIC"
-        # Subsampled EBIC — produces selection-count scores (0–totSS) like bStARS
-        # Stage 1: per-gene EBIC-optimal lambda on each subsample → lambdaSS, networkStability
-        # Stage 2: aggregate (default median) + final full-data fit → betas, lambda
+        # Subsampled EBIC — produces selection-count scores (0–totSS) like bStARS.
+        # Per-gene EBIC-optimal lambda on each subsample → lambdaSS, networkStability.
+        # bebicFinalFit! is optional (post-hoc only) and not called here.
         InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
         InferelatorJL.bebicEstimateLambdas!(grnData, buildGrn;
                                             gamma       = gamma,
                                             minLambda   = minLambda,
                                             maxLambda   = maxLambda,
                                             totLambdas  = totLambdas,
-                                            zScoreLASSO = zScoreLASSO)
-        InferelatorJL.bebicFinalFit!(grnData, buildGrn;
-                                     zScoreLASSO = zScoreLASSO,
-                                     outputDir   = instabilitiesDir)
+                                            zScoreLASSO = zScoreLASSO,
+                                            outputDir   = instabilitiesDir)
 
     else
         error("modelSelection must be \"bStARS\", \"EBIC\", or \"bEBIC\". Got: \"$modelSelection\"")

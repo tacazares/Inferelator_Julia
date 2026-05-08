@@ -143,7 +143,7 @@ sort!(meta, identVar)
 
 # Derive replicate column from identVar if not already present in obs
 # Assumes identVar values follow {celltype}_{replicate} (e.g. "gdT17A_R1" → "R1")
-if batchVar ∉ names(meta)
+if !(batchVar in names(meta))
     meta[!, Symbol(batchVar)] = last.(split.(meta[!, identVar], "_"))
 end
 

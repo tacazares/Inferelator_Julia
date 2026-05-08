@@ -59,7 +59,7 @@ function runInferelator(;
     minLambda::Union{Float64, Nothing} = nothing,
     maxLambda::Union{Float64, Nothing} = nothing,
     totLambdasBstars::Int           = 20,
-    totLambdas::Int                 = 40,
+    totLambdas::Int                 = 100,
     targetInstability::Float64      = 0.05,
     meanEdgesPerGene::Int           = 20,
     correlationWeight::Int          = 1,
@@ -71,8 +71,8 @@ function runInferelator(;
     instabilityLevel::String        = "Network",  # "Network" or "Gene"  (bStARS only)
     useMeanEdgesPerGeneMode::Bool   = true,
     combineOpt::String              = "max",       # "max", "mean", or "min"
-    zScoreTFA::Bool                 = true,
-    zScoreLASSO::Bool               = true,
+    zScoreTFA::Bool                 = false,
+    zScoreLASSO::Bool               = false,
     timeLagFile::String             = "",    # path to 4-column time-lag TSV; leave "" to skip
     timeLag::Real                   = 0.0,   # lag value in same units as timeLagFile (e.g. hours)
     suffix::String                  = ""     # optional custom label appended to output dir, e.g. "_5KBTSS"
@@ -212,18 +212,16 @@ function runInferelator(;
             InferelatorJL.ebicSelect!(grnData, buildGrn; gamma = gamma, zScoreLASSO = zScoreLASSO)
 
         elseif modelSelection == "bEBIC"
-            # Stage 1: per-gene EBIC-optimal lambda on each subsample → lambdaSS, networkStability
-            # Stage 2: aggregate (default median) + final full-data fit → betas, lambda
+            # Per-gene EBIC-optimal lambda on each subsample → lambdaSS, networkStability.
+            # bebicFinalFit! is optional (post-hoc only) and not called here.
             InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
             InferelatorJL.bebicEstimateLambdas!(grnData, buildGrn;
                                                 gamma       = gamma,
                                                 minLambda   = minLambda,
                                                 maxLambda   = maxLambda,
                                                 totLambdas  = totLambdas,
-                                                zScoreLASSO = zScoreLASSO)
-            InferelatorJL.bebicFinalFit!(grnData, buildGrn;
-                                         zScoreLASSO = zScoreLASSO,
-                                         outputDir   = instabilitiesDir)
+                                                zScoreLASSO = zScoreLASSO,
+                                                outputDir   = instabilitiesDir)
         end
 
         InferelatorJL.rankEdges!(data, tfaData, grnData, buildGrn;

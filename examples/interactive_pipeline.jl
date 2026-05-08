@@ -63,13 +63,10 @@ instabilityLevel  = "Network"  # "Network": one shared lambda across all genes
                                # "Gene"   : per-gene lambda — slower, more flexible
 
 # --- Lambda grid -------------------------------------------------------------
-minLambda        = 0.01  # search range lower bound  (all methods)
-maxLambda        = 0.5   # search range upper bound  (all methods)
-totLambdasBstars = 20    # grid points in warm-start pass       (bStARS only)
-totLambdas       = 40    # grid points in full stability pass   (bStARS)
-                         # also used by EBIC / bEBIC when minLambda/maxLambda are set;
-                         # leave minLambda/maxLambda as nothing to let GLMNet choose its
-                         # own solution path automatically (recommended for EBIC / bEBIC)
+minLambda        = nothing  # lower bound (nothing = auto-computed per gene as max|X'y|/n × eps)
+maxLambda        = nothing  # upper bound (nothing = auto-computed per gene as max|X'y|/n)
+totLambdasBstars = 20       # grid points in warm-start pass  (bStARS only)
+totLambdas       = 100      # grid points in full estimation pass (log-spaced; all methods)
 
 # --- Network structure
 meanEdgesPerGene     = 20          # average TF regulators retained per target gene
@@ -82,8 +79,8 @@ lambdaBias           = [0.5]       # prior penalty weight(s): 0 = ignore prior, 
 # --- Data processing
 minTargets           = 3           # minimum targets a TF must regulate in the prior to be retained
 edgeSS               = 0           # TFA edge subsampling replicates; 0 = no subsampling
-zScoreTFA            = true        # z-score target expression before TFA estimation
-zScoreLASSO          = true        # z-score target expression before LASSO regression
+zScoreTFA            = false       # z-score target expression before TFA estimation
+zScoreLASSO          = false       # z-score target expression before LASSO regression
 timeLagFile          = ""          # path to 4-column time-lag TSV; "" skips step 3b
 timeLag              = 0.0         # lag value in same units as timeLagFile (e.g. hours)
 

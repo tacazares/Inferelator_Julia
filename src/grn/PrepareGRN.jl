@@ -229,19 +229,20 @@ function constructSubsamples(expressionData::GeneExpressionData, grnData::GrnDat
 end
 
 function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFAData, grnData::GrnData;
-        minLambda = 0.01, maxLambda = 0.5, totLambdasBstars = 20, totSS = 5,
+        minLambda = nothing, maxLambda = nothing, totLambdasBstars = 20, totSS = 5,
         targetInstability = 0.05, zTarget = false, extensionLimit::Int = 1)
-        
+
     # Extension guard: if the target instability falls outside [minLambda, maxLambda],
     # minLambdaNet/maxLambdaNet will be pinned at the range boundary.
     # bstartsEstimateInstability would then build a lambda grid that never crosses
     # targetInstability, silently producing a network that is too dense or too sparse —
     # no error is raised. This loop detects that condition and extends the range by one
     # order of magnitude in the direction(s) needed, up to extensionLimit times.
-    # On well-characterised datasets with established parameters this loop never fires;
-    # it exists solely as a safety net for new datasets or unusual expression distributions.
+    # Only applies when user provides explicit bounds — auto-computed bounds span
+    # three decades from data and should never require extension.
 
     totResponses = size(grnData.responseMat)[1]
+    totSamps     = size(grnData.predictorMat, 2)
 
     # Pre-compute finite-predictor indices (same for every extension iteration)
     responsePredInds = Vector{Vector{Int}}(undef, 0)
@@ -250,8 +251,33 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
         push!(responsePredInds, findall(x -> x != Inf, currWeights))
     end
 
-    currLambdaMin = Float64(minLambda)
-    currLambdaMax = Float64(maxLambda)
+    userProvidedBounds = (maxLambda !== nothing || minLambda !== nothing)
+
+    if !userProvidedBounds
+        # Auto-compute lambda_max as median across all genes using full data
+        lMaxPerGene = Float64[]
+        for res in 1:totResponses
+            predInds  = responsePredInds[res]
+            dt        = fit(ZScoreTransform, grnData.predictorMat[predInds, :], dims=2)
+            preds_full = transpose(StatsBase.transform(dt, grnData.predictorMat[predInds, :]))
+            if zTarget
+                dtR       = fit(ZScoreTransform, grnData.responseMat[res, :], dims=1)
+                resp_full = StatsBase.transform(dtR, grnData.responseMat[res, :])
+            else
+                resp_full = grnData.responseMat[res, :]
+            end
+            push!(lMaxPerGene, maximum(abs.(Matrix(preds_full)' * vec(resp_full))) / totSamps)
+        end
+        currLambdaMax = median(lMaxPerGene)
+        medP          = median(length.(responsePredInds))
+        eps           = totSamps > medP ? 0.001 : 0.01
+        currLambdaMin = eps * currLambdaMax
+        @info "bStARS: auto-computed lambda range [$currLambdaMin, $currLambdaMax] from data (eps=$eps)"
+    else
+        currLambdaMax = maxLambda !== nothing ? Float64(maxLambda) : Float64(minLambda) / 0.001
+        currLambdaMin = minLambda !== nothing ? Float64(minLambda) : 0.001 * Float64(maxLambda)
+    end
+
     extended = 0
 
     # Declare result variables in outer scope so they survive the loop
@@ -261,11 +287,7 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
     local warmModelSizeMat
 
     while true
-        lambdaRange = collect(range(currLambdaMin, stop = currLambdaMax, length = totLambdasBstars))
-        lambdaRange = reverse(lambdaRange)
-        # lamLog10step = 1/totLambdasBstars
-        # logLamRange =  log10(minLambda):lamLog10step:log10(maxLambda)
-        # lambdaRange = 10 .^ (logLamRange)
+        lambdaRange = reverse(exp.(range(log(currLambdaMin), log(currLambdaMax), length = totLambdasBstars)))
 
         instabilitiesLb    = zeros(totResponses, totLambdasBstars)
         instabilitiesUb    = zeros(totResponses, totLambdasBstars)
@@ -293,7 +315,7 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
                 else
                     currResponses = grnData.responseMat[res, subsamp]
                 end
-                lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 1.0)
+                lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 1.0, standardize = false)
                 ssVals .+= abs.(sign.(lsoln.betas))'
             end
             theta2 = (1/totSS) * ssVals   # empirical edge probability # Fraction of times an edge was selcted
@@ -349,31 +371,24 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
         maxOutNet = (maxLambdaNet == lambdaRange[end])
         minOutNet = (minLambdaNet == lambdaRange[1])
 
-        # Exit if bounds are valid, or if we have already reached the extension limit
-        if (!maxOutNet && !minOutNet) || extended >= extensionLimit
+        # Exit if bounds are valid, or if we have reached the extension limit,
+        # or if bounds were auto-computed (should never need extension)
+        if (!maxOutNet && !minOutNet) || extended >= extensionLimit || !userProvidedBounds
             if extended > 0
                 @info "bStARS lambda range extended $extended time(s). Final range: [$currLambdaMin, $currLambdaMax]"
             end
             break
         end
 
-        # Extend by one range-width in whichever direction(s) are needed.
-        # Adding the current range width (rather than multiplying by 10) keeps
-        # linear spacing coherent: on re-run ~half the points cover the original
-        # range and ~half cover the new territory, preserving resolution at the
-        # boundary where the instability transition is most likely to sit.
-        # (The original code used ×10 because it was paired with a log-spaced
-        # grid, where ×10 = +1 decade = one uniform step. With linear spacing,
-        # ×10 would place almost all points in the new region and leave the
-        # original range nearly unsampled.)
-        rangeWidth = currLambdaMax - currLambdaMin
+        # Extend by one decade in whichever direction(s) are needed.
+        # Log spacing: ×10 upper / ÷10 lower adds exactly one uniform step.
         if maxOutNet
-            @warn "bStARS: target instability not reached at λ_max = $currLambdaMax; extending upper bound (attempt $(extended+1)/$extensionLimit)"
-            currLambdaMax += rangeWidth
+            @warn "bStARS: target instability not reached at λ_max = $currLambdaMax; extending upper bound by one decade (attempt $(extended+1)/$extensionLimit)"
+            currLambdaMax *= 10.0
         end
         if minOutNet
-            @warn "bStARS: max instability not reached at λ_min = $currLambdaMin; extending lower bound (attempt $(extended+1)/$extensionLimit)"
-            currLambdaMin = max(currLambdaMin - rangeWidth, 0.0)   # lambda must stay non-negative
+            @warn "bStARS: max instability not reached at λ_min = $currLambdaMin; extending lower bound by one decade (attempt $(extended+1)/$extensionLimit)"
+            currLambdaMin /= 10.0
         end
         extended += 1
     end
@@ -390,7 +405,7 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
     grnData.modelSizeWarm      = vec(mean(warmModelSizeMat, dims=1))      # avg # TFs selected per gene at each warm-start λ
 end
 
-function bstartsEstimateInstability(grnData::GrnData; totLambdas = 10, instabilityLevel = "Gene", zTarget = false, targetInstability::Float64 = 0.05, outputDir::Union{String, Nothing}=nothing)  # ADDED: targetInstability for λ selection diagnostic plot
+function bstartsEstimateInstability(grnData::GrnData; totLambdas = 100, instabilityLevel = "Gene", zTarget = false, targetInstability::Float64 = 0.05, outputDir::Union{String, Nothing}=nothing)  # ADDED: targetInstability for λ selection diagnostic plot
 
     totResponses,totSamps = size(grnData.responseMat) # totResponses is same as length(grnData["targGenes"])
     totPreds = size(grnData.predictorMat,1)
@@ -410,7 +425,7 @@ function bstartsEstimateInstability(grnData::GrnData; totLambdas = 10, instabili
     for res in 1:totResponses
         λmin = grnData.minLambdas[res]
         λmax = grnData.maxLambdas[res]
-        lambdaRangeGene[res] = reverse(collect(range(λmin, stop=λmax, length=totLambdas)))
+        lambdaRangeGene[res] = reverse(exp.(range(log(λmin), log(λmax), length=totLambdas)))
     end
     grnData.lambdaRangeGene = lambdaRangeGene
 
@@ -418,8 +433,7 @@ function bstartsEstimateInstability(grnData::GrnData; totLambdas = 10, instabili
     minLambda = grnData.minLambdaNet
     maxLambda = grnData.maxLambdaNet
 
-    lambdaRange = collect(range(minLambda, stop = maxLambda, length = totLambdas))
-    lambdaRange = reverse(lambdaRange)
+    lambdaRange = reverse(exp.(range(log(minLambda), log(maxLambda), length = totLambdas)))
     grnData.lambdaRange = lambdaRange
 
     geneInstabilities = zeros(totResponses,totLambdas)
@@ -460,7 +474,7 @@ function bstartsEstimateInstability(grnData::GrnData; totLambdas = 10, instabili
             else
                 currResponses = grnData.responseMat[res, subsamp]
             end
-            lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 1.0)        
+            lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 1.0, standardize = false)
             currBetas = lsoln.betas
             betas[res,predInds, :] = currBetas
             ssVals = ssVals + abs.(sign.(currBetas))' 

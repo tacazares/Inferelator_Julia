@@ -89,7 +89,7 @@ end
 # STEP 3 (cont.) · Estimate TF activity
 # -----------------------------------------------------------------------------
 """
-    estimateTFA(priorData, data; edgeSS=0, zScoreTFA=true, outputDir=".")
+    estimateTFA(priorData, data; edgeSS=0, zScoreTFA=false, outputDir=".")
 
 Estimate TF activity (TFA) by solving `prior * TFA ≈ targetExpression`
 via least squares, with optional bootstrap subsampling of targets.
@@ -98,7 +98,7 @@ via least squares, with optional bootstrap subsampling of targets.
 - `priorData`   : `PriorTFAData` from `loadPrior`
 - `data`        : `GeneExpressionData` from `loadData`
 - `edgeSS`      : Number of edge subsamples (0 = no subsampling)
-- `zScoreTFA`   : Z-score target expression before solving TFA (default true)
+- `zScoreTFA`   : Z-score target expression before solving TFA (default false)
 - `outputDir`   : Directory for intermediate output files (default ".")
 
 # Returns
@@ -108,7 +108,7 @@ function estimateTFA(
     priorData::PriorTFAData,
     data::GeneExpressionData;
     edgeSS::Int       = 0,
-    zScoreTFA::Bool   = true,
+    zScoreTFA::Bool   = false,
     outputDir::String = "."
 )::Matrix{Float64}
 
@@ -191,22 +191,21 @@ Internally runs:
 - `totSS`                 : Total subsamples for fine instability estimation (default 80)
 - `bstarsTotSS`           : Subsamples for warm-start (default 5)
 - `subsampleFrac`         : Fraction of samples per subsample (default 0.63)
-- `minLambda`             : Lower bound of λ grid.
-                            For **bStARS**: bounds of the warm-start search range (default 0.01).
-                            For **EBIC / bEBIC**: `nothing` (default) lets GLMNet choose its own
-                            solution path automatically (recommended). Pass a `Float64` to
-                            constrain the grid to a known range.
-- `maxLambda`             : Upper bound of λ grid.
-                            For **bStARS**: default 0.5.
-                            For **EBIC / bEBIC**: `nothing` (default) = auto.
+- `minLambda`             : Lower bound of the λ grid.
+                            `nothing` (default) = auto-computed per gene as `max|X'y|/n × eps`
+                            (the data-adaptive minimum used internally by GLMNet).
+                            Pass a `Float64` to override with a fixed lower bound.
+- `maxLambda`             : Upper bound of the λ grid.
+                            `nothing` (default) = auto-computed per gene as `max|X'y|/n`.
+                            Pass a `Float64` to override with a fixed upper bound.
 - `totLambdasBstars`      : λ grid points in warm-start pass (default 20)
-- `totLambdas`            : λ grid points in fine estimation pass (default 40)
+- `totLambdas`            : λ grid points in fine estimation pass (default 100; log-spaced)
 - `targetInstability`     : Instability threshold for λ selection (default 0.05)
 - `meanEdgesPerGene`      : Max edges retained per target gene (default 20)
 - `correlationWeight`     : Weight of partial correlation in edge scoring (default 1)
 - `instabilityLevel`      : "Network" (single λ) or "Gene" (per-gene λ)
 - `useMeanEdgesPerGeneMode`: Enforce per-gene edge cap (default true)
-- `zTarget`               : Z-score targets during regression (default true)
+- `zTarget`               : Z-score targets during regression (default false)
 - `leaveOutSampleList`    : Path to a text file listing samples to hold out (one per line);
                             held-out samples are excluded from subsampling and used as the
                             test set for R²_pred evaluation. Pass "" to use all samples.
@@ -236,13 +235,13 @@ function buildNetwork(
     minLambda::Union{Float64, Nothing} = nothing,
     maxLambda::Union{Float64, Nothing} = nothing,
     totLambdasBstars::Int           = 20,
-    totLambdas::Int                 = 40,
+    totLambdas::Int                 = 100,
     targetInstability::Float64      = 0.05,
     meanEdgesPerGene::Int           = 20,
     correlationWeight::Int          = 1,
     instabilityLevel::String        = "Network",
     useMeanEdgesPerGeneMode::Bool   = true,
-    zScoreLASSO::Bool               = true,
+    zScoreLASSO::Bool               = false,
     leaveOutSampleList::String      = "",
     mergedTFsData::Union{mergedTFsResult, Nothing} = nothing,
     modelSelection::String          = "bStARS",
@@ -263,18 +262,15 @@ function buildNetwork(
     buildGrn = BuildGrn()
 
     if modelSelection == "bStARS"
-        # bStARS requires explicit bounds; fall back to established defaults when nothing.
-        bstarsMin = isnothing(minLambda) ? 0.01 : minLambda
-        bstarsMax = isnothing(maxLambda) ? 0.5  : maxLambda
-
         # Warm-start pass (coarse lambda range)
+        # minLambda / maxLambda = nothing → auto-computed from data inside bstarsWarmStart
         constructSubsamples(data, grnData;
                             totSS              = bstarsTotSS,
                             subsampleFrac      = subsampleFrac,
                             leaveOutSampleList = loList)
         bstarsWarmStart(data, priorData, grnData;
-                        minLambda         = bstarsMin,
-                        maxLambda         = bstarsMax,
+                        minLambda         = minLambda,
+                        maxLambda         = maxLambda,
                         totLambdasBstars  = totLambdasBstars,
                         targetInstability = targetInstability,
                         zTarget           = zScoreLASSO)
@@ -320,11 +316,10 @@ function buildNetwork(
 
     elseif modelSelection == "bEBIC"
         # Subsampled EBIC — requires subsample indices.
-        # Stage 1: for each gene × subsample, fit LASSO and select the EBIC-optimal
-        #          lambda. Fills grnData.lambdaSS and buildGrn.networkStability.
-        # Stage 2: aggregate per-subsample lambdas (default: median) and do one
-        #          final full-data fit per gene. Saves bebicOutMat.jld and
-        #          bebic_lambda_summary.tsv.
+        # For each gene × subsample, fit LASSO and select the EBIC-optimal lambda.
+        # Fills grnData.lambdaSS and buildGrn.networkStability (selection counts).
+        # Saves bebicOutMat.jld and bebic_lambda_summary.tsv when outputDir is set.
+        # bebicFinalFit! is no longer called here — it is optional (post-hoc only).
         constructSubsamples(data, grnData;
                             totSS              = totSS,
                             subsampleFrac      = subsampleFrac,
@@ -334,10 +329,8 @@ function buildNetwork(
                               minLambda   = minLambda,
                               maxLambda   = maxLambda,
                               totLambdas  = totLambdas,
-                              zScoreLASSO = zScoreLASSO)
-        bebicFinalFit!(grnData, buildGrn;
-                       zScoreLASSO = zScoreLASSO,
-                       outputDir   = outputDir)
+                              zScoreLASSO = zScoreLASSO,
+                              outputDir   = outputDir)
 
     else
         error("modelSelection must be \"bStARS\", \"EBIC\", or \"bEBIC\". Got: \"$modelSelection\"")
@@ -371,7 +364,7 @@ activity, yielding a data-driven TFA matrix that reflects the final GRN.
 - `tfaGeneFile`  : Optional gene list for TFA (default "")
 - `edgeSS`       : Edge subsampling replicates for TFA (default 0)
 - `minTargets`   : Minimum targets per TF (default 3)
-- `zScoreTFA`    : Z-score target expression before solving TFA (default true)
+- `zScoreTFA`    : Z-score target expression before solving TFA (default false)
 - `timeLagFile`  : Path to 4-column time-lag TSV; omit or pass "" to skip (default "")
 - `timeLag`      : Time-lag value in the same units as `timeLagFile` (default 0.0)
 - `exprFile`     : Original expression file path
@@ -389,7 +382,7 @@ function refineTFA(
     tfaGeneFile::String  = "",
     edgeSS::Int          = 0,
     minTargets::Int      = 3,
-    zScoreTFA::Bool      = true,
+    zScoreTFA::Bool      = false,
     timeLagFile::String  = "",
     timeLag::Real        = 0.0,
     exprFile::String     = "",
@@ -502,10 +495,8 @@ All keyword arguments are forwarded to the relevant sub-functions.
 - `leaveOutSampleList::String = ""` — path to a text file (one sample name per line) listing
   samples to exclude from subsampling; the held-out samples form the test set used by
   `calcR2predFromStabilities` for out-of-sample R² evaluation
-- `minLambda::Union{Float64,Nothing} = nothing` — λ lower bound. For bStARS defaults to 0.01;
-  for EBIC/bEBIC `nothing` lets GLMNet choose the grid automatically (recommended).
-- `maxLambda::Union{Float64,Nothing} = nothing` — λ upper bound. For bStARS defaults to 0.5;
-  for EBIC/bEBIC `nothing` = auto.
+- `minLambda::Union{Float64,Nothing} = nothing` — λ lower bound; `nothing` = auto-computed from data.
+- `maxLambda::Union{Float64,Nothing} = nothing` — λ upper bound; `nothing` = auto-computed from data.
 - `modelSelection::String = "bStARS"` — lambda selection method: "bStARS", "EBIC", or "bEBIC"
 - `gamma::Float64 = 0.5` — EBIC sparsity hyperparameter; only used when modelSelection != "bStARS"
 
@@ -522,8 +513,8 @@ function inferGRN(
     epsilon::Float64                = 0.01,
     minTargets::Int                 = 3,
     edgeSS::Int                     = 0,
-    zScoreTFA::Bool                 = true,
-    zScoreLASSO::Bool               = true,
+    zScoreTFA::Bool                 = false,
+    zScoreLASSO::Bool               = false,
     priorFilePenalties::Vector{String} = String[],
     lambdaBias::Vector{Float64}     = [0.5],
     totSS::Int                      = 80,
@@ -532,7 +523,7 @@ function inferGRN(
     minLambda::Union{Float64, Nothing} = nothing,
     maxLambda::Union{Float64, Nothing} = nothing,
     totLambdasBstars::Int           = 20,
-    totLambdas::Int                 = 40,
+    totLambdas::Int                 = 100,
     targetInstability::Float64      = 0.05,
     meanEdgesPerGene::Int           = 20,
     correlationWeight::Int          = 1,
