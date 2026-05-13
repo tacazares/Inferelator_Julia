@@ -286,17 +286,6 @@ function buildNetwork(
                                    zTarget           = zScoreLASSO,
                                    targetInstability = targetInstability,
                                    outputDir         = outputDir)
-        # Diagnostic plots — called here (main thread) not inside bstartsEstimateInstability
-        # to avoid PyCall GIL crash when @threads migrates the task to a worker thread.
-        # GC.gc() after the call forces Python object cleanup on the main thread before
-        # any subsequent allocation triggers GC on a worker thread.
-        if !isnothing(outputDir) && outputDir != ""
-            plotInstabilityCurves(grnData;
-                                  mode              = :network,
-                                  targetInstability = targetInstability,
-                                  outputDir         = outputDir)
-            GC.gc()
-        end
         chooseLambda!(grnData, buildGrn;
                       instabilityLevel  = instabilityLevel,
                       targetInstability = targetInstability)

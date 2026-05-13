@@ -187,7 +187,7 @@ function rankEdges!(expressionData::GeneExpressionData, tfaData::PriorTFAData, g
     totUniTargs = length(uniTargs)
     tfsPerGene = zeros(totUniTargs,1)
 
-    for targ = ProgressBar(1:totUniTargs)
+    @showprogress dt=0.5 for targ in 1:totUniTargs
         currTarg = uniTargs[targ]
         targRankInds = last.(Tuple.(findall(x -> x == currTarg, keptTargs)))
         currRegs = regs[targRankInds]

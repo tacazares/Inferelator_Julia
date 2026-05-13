@@ -132,9 +132,7 @@ All outputs are written under the directory specified by `outputDir`.
 | `edges.tsv` | all | Full ranked edge table: TF, gene, signed quantile, stability, partial correlation, inPrior flag |
 | `edges_subset.tsv` | all | Top edges after applying the `meanEdgesPerGene` cap |
 | `grnOutMat.jld` | all | Serialised `BuildGrn` struct (full network object) |
-| `instabOutMat.jld` | bStARS | Serialised `GrnData` struct with full stability arrays across the λ grid |
-| `instability_diagnostic_network.png` | bStARS | Two-panel plot: model size vs λ (left) and instability bounds vs λ (right) |
-| `instability_selection_network.png` | bStARS | \|Instability − target\| vs λ with dot at the chosen λ |
+| `instabOutMat.jld` | bStARS | Serialised `GrnData` struct with full stability arrays across the λ grid. Load with `JLD2.load_object` and pass to `plotInstabilityCurves` for on-demand λ selection diagnostics |
 | `bebicOutMat.jld` | bEBIC | Serialised `GrnData` struct — preserves `lambdaSS` (nGenes × totSS per-subsample lambda matrix) for post-hoc analysis |
 | `bebic_lambda_summary.tsv` | bEBIC | Per-gene median and std of EBIC-optimal lambdas across subsamples |
 | `ebic_lambda_summary.tsv` | EBIC | Per-gene chosen lambda and number of non-zero coefficients at that lambda |
