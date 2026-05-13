@@ -4,7 +4,10 @@ module InferelatorJL
 using ArgParse, Arrow, CSV, CategoricalArrays, Colors
 using DataFrames, Distributions, FileIO, GLMNet
 using InlineStrings, Interpolations, JLD2, Measures
-using NamedArrays, OrderedCollections, ProgressBars
+using NamedArrays, OrderedCollections, ProgressMeter
+ENV["MPLBACKEND"] = "Agg"   # force non-interactive backend before PyPlot loads
+                            # prevents GUI window objects from entering Julia's GC queue,
+                            # which would otherwise crash under Threads.@threads (no GIL on worker threads)
 using PyPlot, Random, SparseArrays, SpecialFunctions, StatsBase, TickTock
 
 # ── Structs (always first — all type definitions in one place) ────────────────

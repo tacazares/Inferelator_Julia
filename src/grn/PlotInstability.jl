@@ -69,9 +69,9 @@ vs λ from the fine estimation pass, with a dot at the selected λ.
 - `targetInstability`  : Instability threshold used during λ selection (default 0.05)
 - `outputDir`          : Directory to save both figures; `nothing` displays instead
 
-# Called automatically
-Inside `bstartsEstimateInstability` with `mode = :network` after every run.
-The figures are saved to the same `outputDir` as `instabOutMat.jld`.
+# On-demand usage
+Not called automatically by the pipeline. Load the saved GrnData and call
+explicitly when you want to inspect a run's λ selection.
 
 # Standalone (per-gene)
 ```julia
@@ -208,10 +208,5 @@ function plotInstabilityCurves(
         PyPlot.show()
     end
     PyPlot.close(fig2)
-    # Release all Python figure references immediately so the GC doesn't defer
-    # their cleanup to a worker thread (which crashes PyCall via GIL violation).
-    PyPlot.plt.close("all")
-    GC.gc()
-
     return nothing
 end

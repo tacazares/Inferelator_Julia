@@ -198,12 +198,6 @@ function runInferelator(;
                                                       zTarget           = zScoreLASSO,
                                                       targetInstability = targetInstability,
                                                       outputDir         = instabilitiesDir)
-            # Plot on main thread — PyCall crashes if called from a worker thread
-            InferelatorJL.plotInstabilityCurves(grnData;
-                                                 mode              = :network,
-                                                 targetInstability = targetInstability,
-                                                 outputDir         = instabilitiesDir)
-            GC.gc()   # force Python object cleanup on main thread before next GC-triggering allocation
             InferelatorJL.chooseLambda!(grnData, buildGrn;
                                          instabilityLevel  = instabilityLevel,
                                          targetInstability = targetInstability)

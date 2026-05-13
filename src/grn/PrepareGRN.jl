@@ -299,7 +299,8 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
         # row = gene, col = warm-start λ; each thread writes its own row → no lock needed
         warmModelSizeMat   = zeros(Int, totResponses, totLambdasBstars)
 
-        Threads.@threads for res in ProgressBar(1:totResponses)
+        p = Progress(totResponses; dt=0.5, showspeed=true)
+        Threads.@threads for res in 1:totResponses
             predInds    = responsePredInds[res]
             currPredNum = length(predInds)
             penaltyFactor = grnData.penaltyMat[res, predInds]
@@ -326,6 +327,7 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
             netInstabilitiesUb[res,:] = currPredNum * instabilitiesUb[res,:]
             # number of predictors selected in ≥1 subsample at each warm-start λ
             warmModelSizeMat[res, :] = vec(sum(theta2 .> 0, dims=2))
+            next!(p)
         end
 
         totEdges = sum(totEdgesVec)
@@ -455,14 +457,15 @@ function bstartsEstimateInstability(grnData::GrnData; totLambdas = 100, instabil
 
     totEdges = zeros(totResponses)
     betas = Array{Float64,3}(undef, totResponses, totPreds, totLambdas)
-    Threads.@threads for res in ProgressBar(1:totResponses)
+    p = Progress(totResponses; dt=0.5, showspeed=true)
+    Threads.@threads for res in 1:totResponses
         lambdaRange = instabilityLevel == "Network" ?
                     grnData.lambdaRange :           # single shared vector
                     grnData.lambdaRangeGene[res]   # per‑gene vector
         predInds = responsePredInds[res]
         currPredNum = length(predInds)
-        totEdges[res] = currPredNum 
-        penaltyFactor = grnData.penaltyMat[res,predInds] 
+        totEdges[res] = currPredNum
+        penaltyFactor = grnData.penaltyMat[res,predInds]
         ssVals = zeros(totLambdas,currPredNum)
         for ss = 1:totSS
             subsamp = subsamps[ss,:]
@@ -477,9 +480,10 @@ function bstartsEstimateInstability(grnData::GrnData; totLambdas = 100, instabil
             lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 1.0, standardize = false)
             currBetas = lsoln.betas
             betas[res,predInds, :] = currBetas
-            ssVals = ssVals + abs.(sign.(currBetas))' 
+            ssVals = ssVals + abs.(sign.(currBetas))'
         end
         ssMatrix[:,res,predInds] = ssVals
+        next!(p)
     end
 
     for res = 1:totResponses    

@@ -161,11 +161,12 @@ function ebicSelect!(
     lowerBoundaryHits = zeros(Int, totResponses)
 
     @info "EBIC lambda selection — fitting full-data LASSO per gene"
-    Threads.@threads for res in ProgressBar(1:totResponses)
+    prog = Progress(totResponses; dt=0.5, showspeed=true)
+    Threads.@threads for res in 1:totResponses
         predInds      = responsePredInds[res]
         currPredNum   = length(predInds)
         penaltyFactor = grnData.penaltyMat[res, predInds]
-        p             = currPredNum
+        nPreds        = currPredNum
 
         # Z-score predictors (all samples)
         dt        = fit(ZScoreTransform, grnData.predictorMat[predInds, :], dims=2)
@@ -181,7 +182,7 @@ function ebicSelect!(
         # Build log-spaced lambda grid: use user bounds if provided, else compute from data
         lMax       = maxLambda !== nothing ? Float64(maxLambda) :
                      maximum(abs.(Matrix(currPreds)' * vec(currResponses))) / nSamples
-        eps        = nSamples > p ? 0.001 : 0.01
+        eps        = nSamples > nPreds ? 0.001 : 0.01
         lMin       = minLambda !== nothing ? Float64(minLambda) : eps * lMax
         lambdaGrid = reverse(exp.(range(log(lMin), log(lMax), length = totLambdas)))
 
@@ -193,7 +194,7 @@ function ebicSelect!(
 
         # Select lambda at minimum EBIC
         ebicScores = computeEBIC(lsoln.betas, vec(currResponses), Matrix(currPreds),
-                                 nSamples, p; gamma = gamma)
+                                 nSamples, nPreds; gamma = gamma)
         bestInd   = argmin(ebicScores)
         bestCoefs = vec(lsoln.betas[:, bestInd])
 
@@ -208,6 +209,7 @@ function ebicSelect!(
         nNonzeroVec[res]                = sum(bestCoefs .!= 0)   # model size at chosen λ
         networkStability[res, predInds] = abs.(bestCoefs)        # confidence = |coef|
         betas_out[res, predInds]        = bestCoefs
+        next!(prog)
     end
 
     # Boundary warnings — fired once after the loop with aggregate counts
@@ -316,11 +318,12 @@ function bebicEstimateLambdas!(
     lowerBoundaryHits = zeros(Int, totResponses)
 
     @info "bEBIC: estimating per-subsample EBIC-optimal lambdas ($totSS subsamples per gene)"
-    Threads.@threads for res in ProgressBar(1:totResponses)
+    prog = Progress(totResponses; dt=0.5, showspeed=true)
+    Threads.@threads for res in 1:totResponses
         predInds      = responsePredInds[res]
         currPredNum   = length(predInds)
         penaltyFactor = grnData.penaltyMat[res, predInds]
-        p             = currPredNum
+        nPreds        = currPredNum
 
         bestLambdasSS = zeros(totSS)
         ssSelections  = zeros(totSS, currPredNum)   # binary selection at each subsample's EBIC-optimal lambda
@@ -344,7 +347,7 @@ function bebicEstimateLambdas!(
             # Build log-spaced lambda grid: use user bounds if provided, else compute from data
             lMax       = maxLambda !== nothing ? Float64(maxLambda) :
                          maximum(abs.(Matrix(currPreds)' * vec(currResponses))) / nSS
-            eps        = nSS > p ? 0.001 : 0.01
+            eps        = nSS > nPreds ? 0.001 : 0.01
             lMin       = minLambda !== nothing ? Float64(minLambda) : eps * lMax
             lambdaGrid = reverse(exp.(range(log(lMin), log(lMax), length = totLambdas)))
 
@@ -355,7 +358,7 @@ function bebicEstimateLambdas!(
                            standardize    = false)
 
             ebicScores         = computeEBIC(lsoln.betas, vec(currResponses),
-                                             Matrix(currPreds), nSS, p; gamma = gamma)
+                                             Matrix(currPreds), nSS, nPreds; gamma = gamma)
             bestInd            = argmin(ebicScores)
             bestLambdasSS[ss]  = lsoln.lambda[bestInd]
             # Binary selection at this subsample's EBIC-optimal lambda
@@ -379,6 +382,7 @@ function bebicEstimateLambdas!(
 
         networkStability[res, predInds] = selectionCount
         lambdaSSMat[res, :]             = bestLambdasSS
+        next!(prog)
     end
 
     # Boundary warnings — fired once after the loop with aggregate counts
