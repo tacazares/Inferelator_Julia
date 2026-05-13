@@ -4,7 +4,7 @@ A Julia package for inference of transcriptional regulatory networks (GRNs) from
 gene expression data and prior chromatin accessibility or binding information,
 using the **mLASSO-StARS** algorithm.
 
-![Pipeline diagram](pipeline_diagram.png)
+![Pipeline diagram](pipeline_diagram.svg)
 
 ---
 
