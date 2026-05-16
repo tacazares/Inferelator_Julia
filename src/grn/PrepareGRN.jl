@@ -316,7 +316,7 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
                 else
                     currResponses = grnData.responseMat[res, subsamp]
                 end
-                lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 1.0, standardize = false)
+                lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 0.99, standardize = false)
                 ssVals .+= abs.(sign.(lsoln.betas))'
             end
             theta2 = (1/totSS) * ssVals   # empirical edge probability # Fraction of times an edge was selcted
@@ -477,7 +477,7 @@ function bstartsEstimateInstability(grnData::GrnData; totLambdas = 100, instabil
             else
                 currResponses = grnData.responseMat[res, subsamp]
             end
-            lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 1.0, standardize = false)
+            lsoln = glmnet(currPreds, currResponses, penalty_factor = penaltyFactor, lambda = lambdaRange, alpha = 0.99, standardize = false)
             currBetas = lsoln.betas
             betas[res,predInds, :] = currBetas
             ssVals = ssVals + abs.(sign.(currBetas))'

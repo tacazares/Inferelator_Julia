@@ -189,7 +189,7 @@ function ebicSelect!(
         lsoln = glmnet(currPreds, vec(currResponses);
                        penalty_factor = penaltyFactor,
                        lambda         = lambdaGrid,
-                       alpha          = 1.0,
+                       alpha          = 0.99,
                        standardize    = false)
 
         # Select lambda at minimum EBIC
@@ -354,7 +354,7 @@ function bebicEstimateLambdas!(
             lsoln = glmnet(currPreds, vec(currResponses);
                            penalty_factor = penaltyFactor,
                            lambda         = lambdaGrid,
-                           alpha          = 1.0,
+                           alpha          = 0.99,
                            standardize    = false)
 
             ebicScores         = computeEBIC(lsoln.betas, vec(currResponses),
@@ -495,7 +495,7 @@ function bebicFinalFit!(
         lsoln = glmnet(fullPreds, vec(fullResponses);
                        penalty_factor = penaltyFactor,
                        lambda         = [finalLambda],
-                       alpha          = 1.0,
+                       alpha          = 0.99,
                        standardize    = false)
         betas_out[res, predInds] = vec(lsoln.betas[:, 1])
     end
