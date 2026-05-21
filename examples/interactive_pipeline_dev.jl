@@ -47,12 +47,12 @@ using Dates
 # =============================================================================
 
 outputDir            = "/path/to/output"
-tfaOptions           = ["", "TFmRNA"]   # "" → TFA mode, "TFmRNA" → mRNA mode
-combineOpt           = "max"            # consensus aggregation method: "max", "mean", or "min" stability per edge
+tfaOptions = [:tfa, :mRNA]   # "" → TFA mode, "TFmRNA" → mRNA mode
+combineOpt = :max            # consensus aggregation method: "max", "mean", or "min" stability per edge
 suffix               = ""               # optional label appended to output dir, e.g. "_5KBTSS", "_SCENICprior"
 
 # --- Model selection ---------------------------------------------------------
-modelSelection = "bStARS"   # "bStARS" : stability-based (default, recommended)
+modelSelection = :bStARS   # "bStARS" : stability-based (default, recommended)
                              # "EBIC"   : Extended BIC — fast, no subsampling required
                              # "bEBIC"  : bootstrap EBIC — subsampled, selection-frequency scores
 gamma          = 0.5         # EBIC sparsity penalty: 0 = BIC, 1 = maximum sparsity
@@ -65,7 +65,7 @@ subsampleFrac = 0.68  # fraction of samples per subsample (0.63–0.68 typical)
 # --- bStARS-only settings ----------------------------------------------------
 bstarsTotSS       = 5     # subsamples for warm-start lambda range search (coarser pass)
 targetInstability = 0.05  # instability threshold for lambda selection (5% default)
-instabilityLevel  = "Network"  # "Network": one shared λ across all genes
+instabilityLevel = :network  # "Network": one shared λ across all genes
                                # "Gene"   : per-gene λ — slower, more flexible
 
 # --- Lambda grid -------------------------------------------------------------
@@ -105,23 +105,24 @@ zTFAStr      = zScoreTFA   ? "" : "_noZscoreTFA"
 zLASSOStr    = zScoreLASSO ? "" : "_noZscoreLASSO"
 gammaStr     = replace(string(gamma), "." => "p")
 
-methodStr = if modelSelection == "bStARS"
-    lowercase(instabilityLevel) * "Lambda_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
-elseif modelSelection == "bEBIC"
+methodStr = if modelSelection == :bStARS
+    string(instabilityLevel) * "Lambda_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
+elseif modelSelection == :bEBIC
     "bEBIC_gamma" * gammaStr * "_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
-elseif modelSelection == "EBIC"
+elseif modelSelection == :EBIC
     "EBIC_gamma" * gammaStr
 end
 
 networkBaseName = methodStr * "_" * lambdaStr * "_" *
                   string(meanEdgesPerGene) * "tfsPerGene_" *
-                  combineOpt * zTFAStr * zLASSOStr * suffix
+                  string(combineOpt) * zTFAStr * zLASSOStr * suffix
 dirOut = joinpath(outputDir, networkBaseName)
 mkpath(dirOut)
 
 # Save all run parameters for reproducibility
 _j(::Nothing)         = "null"
 _j(x::Bool)           = x ? "true" : "false"
+_j(x::Symbol)         = "\"" * string(x) * "\""
 _j(x::AbstractString) = "\"" * replace(x, "\\" => "\\\\", "\"" => "\\\"") * "\""
 _j(x::AbstractVector) = "[" * join(_j.(x), ", ") * "]"
 _j(x)                 = string(x)
@@ -216,10 +217,10 @@ InferelatorJL.applyTimeLag!(tfaData, data, timeLagFile, timeLag)
 # The lambda selection branch is controlled by modelSelection in config.
 
 for tfaOpt in tfaOptions
-    instabilitiesDir = tfaOpt == "" ? joinpath(dirOut, "TFA") : joinpath(dirOut, "TFmRNA")
+    instabilitiesDir = tfaOpt == :tfa ? joinpath(dirOut, "TFA") : joinpath(dirOut, "TFmRNA")
     mkpath(instabilitiesDir)
 
-    @info "Building network" mode=(isempty(tfaOpt) ? "TFA" : tfaOpt) modelSelection=modelSelection
+    @info "Building network" mode=(tfaOpt == :tfa ? "TFA" : tfaOpt) modelSelection=modelSelection
 
     grnData = GrnData()
     InferelatorJL.preparePredictorMat!(grnData, data, tfaData; tfaOpt = tfaOpt)
@@ -229,7 +230,7 @@ for tfaOpt in tfaOptions
                                          tfaOpt             = tfaOpt)
     buildGrn = BuildGrn()
 
-    if modelSelection == "bStARS"
+    if modelSelection == :bStARS
         # Warm-start pass: coarse lambda range on a small number of subsamples
         InferelatorJL.constructSubsamples(data, grnData; totSS = bstarsTotSS, subsampleFrac = subsampleFrac)
         InferelatorJL.bstarsWarmStart(data, tfaData, grnData;
@@ -250,7 +251,7 @@ for tfaOpt in tfaOptions
                                      instabilityLevel  = instabilityLevel,
                                      targetInstability = targetInstability)
 
-    elseif modelSelection == "EBIC"
+    elseif modelSelection == :EBIC
         # Single full-data LASSO fit per gene — no subsampling required
         InferelatorJL.ebicSelect!(grnData, buildGrn;
                                    gamma       = gamma,
@@ -259,7 +260,7 @@ for tfaOpt in tfaOptions
                                    totLambdas  = totLambdas,
                                    zScoreLASSO = zScoreLASSO)
                                    
-    elseif modelSelection == "bEBIC"
+    elseif modelSelection == :bEBIC
         # Subsampled EBIC — produces selection-count scores (0–totSS) like bStARS.
         # Per-gene EBIC-optimal lambda on each subsample → lambdaSS, networkStability.
         # bebicFinalFit! is optional (post-hoc only) and not called here.
@@ -273,7 +274,7 @@ for tfaOpt in tfaOptions
                                             outputDir   = instabilitiesDir)
 
     else
-        error("modelSelection must be \"bStARS\", \"EBIC\", or \"bEBIC\". Got: \"$modelSelection\"")
+        error("modelSelection must be :bStARS, :EBIC, or :bEBIC. Got: $modelSelection")
     end
 
     InferelatorJL.rankEdges!(data, tfaData, grnData, buildGrn;
@@ -296,7 +297,7 @@ nets2combine   = [
     joinpath(dirOut, "TFmRNA", "edges.tsv")
 ]
 InferelatorJL.aggregateNetworks(nets2combine;
-                                method              = Symbol(combineOpt),
+                                method = combineOpt,
                                 meanEdgesPerGene    = meanEdgesPerGene,
                                 useMeanEdgesPerGene = useMeanEdgesPerGeneMode,
                                 outputDir           = combinedNetDir)
@@ -306,7 +307,7 @@ InferelatorJL.aggregateNetworks(nets2combine;
 # =============================================================================
 # Uses combined network as new prior, re-estimates TFA, re-runs mLASSO-StARS.
 
-netsCombinedMatrix = joinpath(combinedNetDir, "combined_" * combineOpt * ".tsv")
+netsCombinedMatrix = joinpath(combinedNetDir, "combined_" * string(combineOpt) * ".tsv")
 InferelatorJL.refineTFA(data, mergedTFsData;
                         priorFile    = netsCombinedMatrix,
                         tfaGeneFile  = tfaGeneFile,
@@ -331,7 +332,7 @@ InferelatorJL.refineTFA(data, mergedTFsData;
 outNetFiles = OrderedDict(
     "TFA"      => joinpath(dirOut, "TFA",    "edges_subset.tsv"),
     "TFmRNA"   => joinpath(dirOut, "TFmRNA", "edges_subset.tsv"),
-    "Combined" => joinpath(combinedNetDir, "combined_" * combineOpt * "_sp.tsv")
+    "Combined" => joinpath(combinedNetDir, "combined_" * string(combineOpt) * "_sp.tsv")
 )
 
 # Gold standard(s): name => file path

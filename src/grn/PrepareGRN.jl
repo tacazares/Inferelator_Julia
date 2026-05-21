@@ -58,8 +58,8 @@ Dependencies:
 #     end
 # end
 
-function preparePredictorMat!(grnData::GrnData, expressionData::GeneExpressionData, priorData::PriorTFAData; tfaOpt::String = "")
-    if tfaOpt != ""
+function preparePredictorMat!(grnData::GrnData, expressionData::GeneExpressionData, priorData::PriorTFAData; tfaOpt::Symbol = :tfa)
+    if tfaOpt == :mRNA
         @info "TF mRNA mode (no TFA)"
         pRegs = priorData.pRegsNoTfa;
         pTargs = priorData.pTargsNoTfa;
@@ -90,7 +90,7 @@ function preparePredictorMat!(grnData::GrnData, expressionData::GeneExpressionDa
     # # predictorMat will be TFA (when available) and TFmRNA when TFA not available    
     # predictorMat = [priorData.medTfas; expressionData.potRegMatmRNA[uniNoPriorRegInds,:]]
     # # If not using TFA, just set predictorMat to mRNA
-    # if tfaOpt != "" # use the mRNA levels of TFs
+    # if tfaOpt == :mRNA # use the mRNA levels of TFs
     #     currPredMat = zeros(totPreds,length(expressionData.cellLabels))
     #     for prend = 1:totPreds
     #         prendInd = findall(x -> x==allPredictors[prend],expressionData.potRegsmRNA)
@@ -101,7 +101,7 @@ function preparePredictorMat!(grnData::GrnData, expressionData::GeneExpressionDa
     # end
 
     # predictorMat will be TFA (when available) and TFmRNA when TFA not available   
-    if tfaOpt == ""
+    if tfaOpt == :tfa
         # TFA: stack TFA estimates on top of mRNA for TFs not in prior
         predictorMat = [priorData.medTfas; expressionData.potRegMatmRNA[uniNoPriorRegInds,:]]
     else
@@ -125,7 +125,7 @@ end
 function preparePenaltyMatrix!(expressionData::GeneExpressionData, grnData::GrnData;
                                priorFilePenalties::Vector{String} = String[],
                                lambdaBias::Vector{Float64}        = [0.5],
-                               tfaOpt::String                     = "")
+                               tfaOpt::Symbol = :tfa)
     # # priorWeight for a TF-Gene pair will be 1 if interaction not in prior and 1-lambdaBias if
     # interaction is in prior. If multiple priors, take the minimum lambdaBias across all priors for that interaction.
     # 1. Update Penalty Matrix
@@ -170,7 +170,7 @@ function preparePenaltyMatrix!(expressionData::GeneExpressionData, grnData::GrnD
 
     # 2. 
     totPreds = length(grnData.allPredictors)
-    if tfaOpt !== ""
+    if tfaOpt == :mRNA
         ## set lambda penalty to infinity for positive feedback edges where TF 
         # mRNA levels serves both as gene expression and TFA estimate
         for pr = 1:totPreds   # Changed this from length(expressionData.potRegs) to length(grnData.allPredictors)
@@ -407,7 +407,7 @@ function bstarsWarmStart(expressionData::GeneExpressionData, tfaData::PriorTFADa
     grnData.modelSizeWarm      = vec(mean(warmModelSizeMat, dims=1))      # avg # TFs selected per gene at each warm-start λ
 end
 
-function bstartsEstimateInstability(grnData::GrnData; totLambdas = 100, instabilityLevel = "Gene", zTarget = false, targetInstability::Float64 = 0.05, outputDir::Union{String, Nothing}=nothing)  # ADDED: targetInstability for λ selection diagnostic plot
+function bstartsEstimateInstability(grnData::GrnData; totLambdas = 100, instabilityLevel = :gene, zTarget = false, targetInstability::Float64 = 0.05, outputDir::Union{String, Nothing}=nothing)  # ADDED: targetInstability for λ selection diagnostic plot
 
     totResponses,totSamps = size(grnData.responseMat) # totResponses is same as length(grnData["targGenes"])
     totPreds = size(grnData.predictorMat,1)
@@ -415,7 +415,7 @@ function bstartsEstimateInstability(grnData::GrnData; totLambdas = 100, instabil
     # if instabilityLevel == "Gene"
     #     minLambda = minimum(grnData.minLambdas)
     #     maxLambda = maximum(grnData.maxLambdas)
-    # elseif instabilityLevel == "Network"
+    # elseif instabilityLevel == :network
     #     minLambda = grnData.minLambdaNet
     #     maxLambda = grnData.maxLambdaNet
     # else
@@ -459,7 +459,7 @@ function bstartsEstimateInstability(grnData::GrnData; totLambdas = 100, instabil
     betas = Array{Float64,3}(undef, totResponses, totPreds, totLambdas)
     p = Progress(totResponses; dt=0.5, showspeed=true)
     Threads.@threads for res in 1:totResponses
-        lambdaRange = instabilityLevel == "Network" ?
+        lambdaRange = instabilityLevel == :network ?
                     grnData.lambdaRange :           # single shared vector
                     grnData.lambdaRangeGene[res]   # per‑gene vector
         predInds = responsePredInds[res]

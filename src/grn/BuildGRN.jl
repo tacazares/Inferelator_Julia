@@ -29,7 +29,7 @@
 #         end
 #     end
 
-function chooseLambda!(grnData::GrnData, buildGrn::BuildGrn; instabilityLevel = "Gene", targetInstability = 0.05)
+function chooseLambda!(grnData::GrnData, buildGrn::BuildGrn; instabilityLevel = :gene, targetInstability = 0.05)
     totLambdas, totNetGenes, totNetTfs = size(grnData.stabilityMat)
     networkStability = zeros(totNetGenes, totNetTfs)
     networkStability = convert(Matrix{Float64}, networkStability)
@@ -38,7 +38,7 @@ function chooseLambda!(grnData::GrnData, buildGrn::BuildGrn; instabilityLevel = 
     betas = zeros(totNetGenes, totNetTfs)
     lambdaTrack = []
     ## transform StARS instabilities into stabilities 
-    if instabilityLevel == "Gene"
+    if instabilityLevel == :gene
         totMins = 0
         totMaxs = 0
         for targ = 1:totNetGenes
@@ -67,7 +67,7 @@ function chooseLambda!(grnData::GrnData, buildGrn::BuildGrn; instabilityLevel = 
             @info "Target instability reached at maximum lambda for $totMaxs gene(s)"
         end
 
-    elseif instabilityLevel == "Network"
+    elseif instabilityLevel == :network
         @info "Network instabilities detected"
         # find the single lambda corresponding to the cutoff
         devs = abs.(grnData.netInstabilities .- targetInstability)

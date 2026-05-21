@@ -42,11 +42,11 @@ using Dates
 # =============================================================================
 
 outputDir            = "/path/to/output"
-combineOpt           = "max"       # consensus aggregation method: "max", "mean", or "min" stability per edge
+combineOpt = :max       # consensus aggregation method: "max", "mean", or "min" stability per edge
 suffix               = ""          # optional label appended to output dir, e.g. "_5KBTSS", "_SCENICprior"
 
 # --- Model selection ---------------------------------------------------------
-modelSelection = "bStARS"   # "bStARS" : stability-based (default, recommended)
+modelSelection = :bStARS   # "bStARS" : stability-based (default, recommended)
                              # "EBIC"   : Extended BIC — fast, no subsampling required
                              # "bEBIC"  : bootstrap EBIC — subsampled, selection-frequency scores
 gamma          = 0.5         # EBIC sparsity penalty: 0 = BIC, 1 = maximum sparsity
@@ -59,7 +59,7 @@ subsampleFrac = 0.68  # fraction of samples per subsample (0.63–0.68 typical)
 # --- bStARS-only settings ----------------------------------------------------
 bstarsTotSS       = 5     # subsamples for warm-start lambda range search (coarser pass)
 targetInstability = 0.05  # instability threshold for lambda selection (5% default)
-instabilityLevel  = "Network"  # "Network": one shared lambda across all genes
+instabilityLevel = :network  # "Network": one shared lambda across all genes
                                # "Gene"   : per-gene lambda — slower, more flexible
 
 # --- Lambda grid -------------------------------------------------------------
@@ -100,23 +100,24 @@ zTFAStr      = zScoreTFA   ? "" : "_noZscoreTFA"
 zLASSOStr    = zScoreLASSO ? "" : "_noZscoreLASSO"
 gammaStr     = replace(string(gamma), "." => "p")
 
-methodStr = if modelSelection == "bStARS"
-    lowercase(instabilityLevel) * "Lambda_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
-elseif modelSelection == "bEBIC"
+methodStr = if modelSelection == :bStARS
+    string(instabilityLevel) * "Lambda_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
+elseif modelSelection == :bEBIC
     "bEBIC_gamma" * gammaStr * "_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
-elseif modelSelection == "EBIC"
+elseif modelSelection == :EBIC
     "EBIC_gamma" * gammaStr
 end
 
 networkBaseName = methodStr * "_" * lambdaStr * "_" *
                   string(meanEdgesPerGene) * "tfsPerGene_" *
-                  combineOpt * zTFAStr * zLASSOStr * suffix
+                  string(combineOpt) * zTFAStr * zLASSOStr * suffix
 dirOut = joinpath(outputDir, networkBaseName)
 mkpath(dirOut)
 
 # Save all run parameters for reproducibility
 _j(::Nothing)         = "null"
 _j(x::Bool)           = x ? "true" : "false"
+_j(x::Symbol)         = "\"" * string(x) * "\""
 _j(x::AbstractString) = "\"" * replace(x, "\\" => "\\\\", "\"" => "\\\"") * "\""
 _j(x::AbstractVector) = "[" * join(_j.(x), ", ") * "]"
 _j(x)                 = string(x)
@@ -237,7 +238,7 @@ combinedNetDir = joinpath(dirOut, "Combined")
 aggregateNetworks(
     [joinpath(dirOut, "TFA",    "edges.tsv"),
      joinpath(dirOut, "TFmRNA", "edges.tsv")];
-    method              = Symbol(combineOpt),
+    method = combineOpt,
     meanEdgesPerGene    = meanEdgesPerGene,
     useMeanEdgesPerGene = useMeanEdgesPerGeneMode,
     outputDir           = combinedNetDir)
@@ -248,7 +249,7 @@ aggregateNetworks(
 # Uses the combined network as a new prior to re-estimate TF activity, then
 # re-runs mLASSO-StARS. Outputs go to Combined/TFA/.
 
-netsCombinedMatrix = joinpath(combinedNetDir, "combined_" * combineOpt * ".tsv")
+netsCombinedMatrix = joinpath(combinedNetDir, "combined_" * string(combineOpt) * ".tsv")
 refineTFA(netsCombinedMatrix, data, mergedTFs;
           tfaGeneFile = tfaGeneFile,
           edgeSS      = edgeSS,
@@ -274,7 +275,7 @@ using OrderedCollections
 outNetFiles = OrderedDict(
     "TFA"      => joinpath(dirOut, "TFA",    "edges_subset.tsv"),
     "TFmRNA"   => joinpath(dirOut, "TFmRNA", "edges_subset.tsv"),
-    "Combined" => joinpath(combinedNetDir, "combined_" * combineOpt * "_sp.tsv")
+    "Combined" => joinpath(combinedNetDir, "combined_" * string(combineOpt) * "_sp.tsv")
 )
 
 # Gold standard(s): name => file path

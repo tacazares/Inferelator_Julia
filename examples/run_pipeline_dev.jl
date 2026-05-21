@@ -52,7 +52,7 @@ function runInferelator(;
     priorFilePenalties::Vector{String},
     tfaGeneFile::String             = "",
     outputDir::String,
-    tfaOptions::Vector{String}      = ["", "TFmRNA"],   # "" → TFA, "TFmRNA" → mRNA
+    tfaOptions::Vector{Symbol}       = [:tfa, :mRNA],   # :tfa → TFA mode, :mRNA → mRNA mode
     totSS::Int                      = 80,
     bstarsTotSS::Int                = 5,
     subsampleFrac::Float64          = 0.68,
@@ -66,11 +66,11 @@ function runInferelator(;
     minTargets::Int                 = 3,
     edgeSS::Int                     = 0,
     lambdaBias::Vector{Float64}     = [0.5],
-    modelSelection::String          = "bStARS",   # "bStARS", "EBIC", or "bEBIC"
+    modelSelection::Symbol          = :bStARS,    # :bStARS, :EBIC, or :bEBIC
     gamma::Float64                  = 0.5,         # EBIC sparsity penalty (EBIC / bEBIC only)
-    instabilityLevel::String        = "Network",  # "Network" or "Gene"  (bStARS only)
+    instabilityLevel::Symbol        = :network,   # :network (single λ) or :gene (per-gene λ)  (bStARS only)
     useMeanEdgesPerGeneMode::Bool   = true,
-    combineOpt::String              = "max",       # "max", "mean", or "min"
+    combineOpt::Symbol              = :max,        # :max, :mean, or :min
     zScoreTFA::Bool                 = false,
     zScoreLASSO::Bool               = false,
     timeLagFile::String             = "",    # path to 4-column time-lag TSV; leave "" to skip
@@ -85,23 +85,24 @@ function runInferelator(;
     zLASSOStr    = zScoreLASSO ? "" : "_noZscoreLASSO"
     gammaStr     = replace(string(gamma), "." => "p")
 
-    methodStr = if modelSelection == "bStARS"
-        lowercase(instabilityLevel) * "Lambda_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
-    elseif modelSelection == "bEBIC"
+    methodStr = if modelSelection == :bStARS
+        string(instabilityLevel) * "Lambda_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
+    elseif modelSelection == :bEBIC
         "bEBIC_gamma" * gammaStr * "_" * string(totSS) * "totSS_subsamplePCT" * subsampleStr
-    elseif modelSelection == "EBIC"
+    elseif modelSelection == :EBIC
         "EBIC_gamma" * gammaStr
     end
 
     networkBaseName = methodStr * "_" * lambdaStr * "_" *
                       string(meanEdgesPerGene) * "tfsPerGene_" *
-                      combineOpt * zTFAStr * zLASSOStr * suffix
+                      string(combineOpt) * zTFAStr * zLASSOStr * suffix
     dirOut = joinpath(outputDir, networkBaseName)
     mkpath(dirOut)
 
     # Save all run parameters for reproducibility
     _j(::Nothing)         = "null"
     _j(x::Bool)           = x ? "true" : "false"
+    _j(x::Symbol)         = "\"" * string(x) * "\""
     _j(x::AbstractString) = "\"" * replace(x, "\\" => "\\\\", "\"" => "\\\"") * "\""
     _j(x::AbstractVector) = "[" * join(_j.(x), ", ") * "]"
     _j(x)                 = string(x)
@@ -170,10 +171,10 @@ function runInferelator(;
 
     # Step 4 — Build GRN for each predictor mode
     for tfaOpt in tfaOptions
-        instabilitiesDir = tfaOpt == "" ? joinpath(dirOut, "TFA") : joinpath(dirOut, "TFmRNA")
+        instabilitiesDir = tfaOpt == :tfa ? joinpath(dirOut, "TFA") : joinpath(dirOut, "TFmRNA")
         mkpath(instabilitiesDir)
 
-        @info "Building network" tfaOpt=(isempty(tfaOpt) ? "TFA" : tfaOpt)
+        @info "Building network" tfaOpt=(tfaOpt == :tfa ? "TFA" : tfaOpt)
 
         grnData  = GrnData()
         buildGrn = BuildGrn()
@@ -183,7 +184,7 @@ function runInferelator(;
                                              lambdaBias         = lambdaBias,
                                              tfaOpt             = tfaOpt)
 
-        if modelSelection == "bStARS"
+        if modelSelection == :bStARS
             InferelatorJL.constructSubsamples(data, grnData; totSS = bstarsTotSS, subsampleFrac = subsampleFrac)
             InferelatorJL.bstarsWarmStart(data, tfaData, grnData;
                                            minLambda         = minLambda,
@@ -202,10 +203,10 @@ function runInferelator(;
                                          instabilityLevel  = instabilityLevel,
                                          targetInstability = targetInstability)
 
-        elseif modelSelection == "EBIC"
+        elseif modelSelection == :EBIC
             InferelatorJL.ebicSelect!(grnData, buildGrn; gamma = gamma, zScoreLASSO = zScoreLASSO)
 
-        elseif modelSelection == "bEBIC"
+        elseif modelSelection == :bEBIC
             # Per-gene EBIC-optimal lambda on each subsample → lambdaSS, networkStability.
             # bebicFinalFit! is optional (post-hoc only) and not called here.
             InferelatorJL.constructSubsamples(data, grnData; totSS = totSS, subsampleFrac = subsampleFrac)
@@ -234,13 +235,13 @@ function runInferelator(;
         joinpath(dirOut, "TFmRNA", "edges.tsv")
     ]
     InferelatorJL.aggregateNetworks(nets2combine;
-                                    method              = Symbol(combineOpt),
+                                    method = combineOpt,
                                     meanEdgesPerGene    = meanEdgesPerGene,
                                     useMeanEdgesPerGene = useMeanEdgesPerGeneMode,
                                     outputDir           = combinedNetDir)
 
     # Step 6 — Re-estimate TFA using the consensus network as a refined prior
-    netsCombinedMatrix = joinpath(combinedNetDir, "combined_" * combineOpt * ".tsv")
+    netsCombinedMatrix = joinpath(combinedNetDir, "combined_" * string(combineOpt) * ".tsv")
     InferelatorJL.refineTFA(data, mergedTFsData;
                             priorFile    = netsCombinedMatrix,
                             tfaGeneFile  = tfaGeneFile,
@@ -266,7 +267,7 @@ regFile            = "/path/to/potential_regs.txt"     # one TF per line
 priorFile          = "/path/to/prior.tsv"
 priorFilePenalties = ["/path/to/prior.tsv"]
 outputDir          = "/path/to/output"
-combineOpt         = "max"   # must match combineOpt inside runInferelator (default "max")
+combineOpt = :max   # must match combineOpt inside runInferelator (default "max")
 
 runInferelator(;
     geneExprFile       = geneExprFile,
@@ -282,7 +283,7 @@ runInferelator(;
 # =============================================================================
 # Run after the pipeline completes. Edit gsParam to point to your gold-standard file(s).
 # dirOut below reproduces the name built inside runInferelator() with default parameters
-# (subsampleFrac=0.68, lambdaBias=[0.5], totSS=80, meanEdgesPerGene=20, instabilityLevel="Network").
+# (subsampleFrac=0.68, lambdaBias=[0.5], totSS=80, meanEdgesPerGene=20, instabilityLevel = :network).
 # Adjust the networkBaseName string if you changed any of those defaults.
 # See examples/plotPR.jl to generate PR curve plots from the saved results.
 # ADDED: step 7 for post-pipeline network evaluation using internal computePR directly
@@ -295,7 +296,7 @@ combinedNetDir = joinpath(dirOut, "Combined")
 outNetFiles = OrderedDict(
     "TFA"      => joinpath(dirOut, "TFA",    "edges_subset.tsv"),
     "TFmRNA"   => joinpath(dirOut, "TFmRNA", "edges_subset.tsv"),
-    "Combined" => joinpath(combinedNetDir, "combined_" * combineOpt * "_sp.tsv")
+    "Combined" => joinpath(combinedNetDir, "combined_" * string(combineOpt) * "_sp.tsv")
 )
 
 # Gold standard(s): name => file path

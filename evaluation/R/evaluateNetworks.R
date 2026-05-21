@@ -149,10 +149,12 @@ write.table(summaryTable,
 # PART 2: Global pairwise similarity
 #
 # Story: How similar are the networks to each other overall?
-#        The global Jaccard heatmap gives the headline number.
+#        The global Jaccard heatmap gives the headline binary agreement number.
 #        The line plot shows whether similarity holds at all confidence
 #        thresholds or only at the very top — a flat line means agreement is
 #        consistent; a rising line means networks converge only at high confidence.
+#        Spearman rank correlation complements Jaccard: it measures agreement on
+#        the full edge ordering rather than binary set membership.
 #
 # Outputs:
 #   02_global_similarity/GlobalJaccard_heatmap_allEdges.pdf
@@ -160,6 +162,8 @@ write.table(summaryTable,
 #   02_global_similarity/pairwise_edge_intersection_counts.tsv
 #   02_global_similarity/edges_unique_to_each_network.tsv
 #   02_global_similarity/jaccard_similarity_byTopNpercent.tsv
+#   02_global_similarity/RankCorrelation_Spearman_heatmap.pdf
+#   02_global_similarity/RankCorrelation_Spearman_matrix.tsv
 # =============================================================================
 
 # Per-TF target counts (computed here, reused in Parts 3 and 4)
@@ -252,6 +256,52 @@ p_jac <- ggplot(jaccardDf, aes(x = TopNpercent, y = Jaccard, color = pairID, gro
 
 ggsave(file.path(dir02, "JaccardSimilarity_acrossTopNpercent.pdf"),
        plot = p_jac, width = 7, height = 4, dpi = 600)
+
+# Spearman rank correlation — continuous complement to Jaccard
+# Jaccard measures binary agreement (which edges pass a threshold).
+# Spearman measures whether methods agree on the *ordering* of all edges,
+# independent of any threshold choice.
+# Low Spearman + similar PR curves → complementary methods; worth combining.
+# High Spearman → methods are essentially equivalent in what they rank highly.
+allEdges <- unique(unlist(lapply(netDataList, function(d) {
+  paste(d[[tfCol]], d[[targetCol]], sep = "_")
+})))
+
+scoreMatrix <- do.call(cbind, lapply(networkNames, function(nm) {
+  d       <- netDataList[[nm]]
+  edgeKey <- paste(d[[tfCol]], d[[targetCol]], sep = "_")
+  scores  <- setNames(d[[stabCol]], edgeKey)
+  s       <- scores[allEdges]
+  s[is.na(s)] <- 0
+  s
+}))
+colnames(scoreMatrix) <- networkNames
+rownames(scoreMatrix) <- allEdges
+
+corrMat <- cor(scoreMatrix, method = "spearman")
+
+write.table(corrMat,
+            file.path(dir02, "RankCorrelation_Spearman_matrix.tsv"),
+            quote = FALSE, col.names = NA, row.names = TRUE, sep = "\t")
+
+corrCol <- colorRampPalette(c("#2166AC", "white", "#B2182B"))(100)
+breaks  <- seq(-1, 1, length.out = 101)
+
+tryCatch({
+  pdf(file.path(dir02, "RankCorrelation_Spearman_heatmap.pdf"),
+      width = 4, height = 4)
+  pheatmap(corrMat,
+           color           = corrCol,
+           breaks          = breaks,
+           display_numbers = TRUE,
+           number_format   = "%.3f",
+           fontsize        = 8,
+           fontsize_number = 7,
+           cluster_rows    = FALSE,
+           cluster_cols    = FALSE,
+           border_color    = "grey80",
+           main            = "Spearman rank correlation of edge confidence scores")
+}, finally = invisible(dev.off()))
 
 
 # =============================================================================

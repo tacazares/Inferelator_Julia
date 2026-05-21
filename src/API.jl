@@ -203,7 +203,7 @@ Internally runs:
 - `targetInstability`     : Instability threshold for λ selection (default 0.05)
 - `meanEdgesPerGene`      : Max edges retained per target gene (default 20)
 - `correlationWeight`     : Weight of partial correlation in edge scoring (default 1)
-- `instabilityLevel`      : "Network" (single λ) or "Gene" (per-gene λ)
+- `instabilityLevel`      : `:network` (single λ) or `:gene` (per-gene λ)
 - `useMeanEdgesPerGeneMode`: Enforce per-gene edge cap (default true)
 - `zTarget`               : Z-score targets during regression (default false)
 - `leaveOutSampleList`    : Path to a text file listing samples to hold out (one per line);
@@ -211,12 +211,12 @@ Internally runs:
                             test set for R²_pred evaluation. Pass "" to use all samples.
 - `mergedTFsData`         : `mergedTFsResult` returned by `loadPrior`; required for TF
                             de-merging after regression. Pass `nothing` to skip expansion.
-- `modelSelection`        : Lambda selection method: "bStARS" (default), "EBIC", or "bEBIC".
-                            "bStARS" uses stability-based selection (current default).
-                            "EBIC" uses a single full-data fit scored by Extended BIC.
-                            "bEBIC" uses EBIC on each subsample and takes the median lambda.
+- `modelSelection`        : Lambda selection method: `:bStARS` (default), `:EBIC`, or `:bEBIC`.
+                            `:bStARS` uses stability-based selection (current default).
+                            `:EBIC` uses a single full-data fit scored by Extended BIC.
+                            `:bEBIC` uses EBIC on each subsample and takes the median lambda.
 - `gamma`                 : EBIC hyperparameter controlling the sparsity penalty (default 0.5).
-                            Only used when `modelSelection` is "EBIC" or "bEBIC".
+                            Only used when `modelSelection` is `:EBIC` or `:bEBIC`.
                             gamma=0 reduces to standard BIC; gamma=0.5 is recommended for GRN.
 - `outputDir`             : Output directory for edges.tsv and stability arrays
 
@@ -239,17 +239,17 @@ function buildNetwork(
     targetInstability::Float64      = 0.05,
     meanEdgesPerGene::Int           = 20,
     correlationWeight::Int          = 1,
-    instabilityLevel::String        = "Network",
+    instabilityLevel::Symbol = :network,
     useMeanEdgesPerGeneMode::Bool   = true,
     zScoreLASSO::Bool               = false,
     leaveOutSampleList::String      = "",
     mergedTFsData::Union{mergedTFsResult, Nothing} = nothing,
-    modelSelection::String          = "bStARS",
+    modelSelection::Symbol = :bStARS,
     gamma::Float64                  = 0.5,
     outputDir::String               = "."
 )::BuildGrn
 
-    tfaOpt  = tfaMode ? "" : "TFmRNA"
+    tfaOpt = tfaMode ? :tfa : :mRNA
     loList  = isempty(leaveOutSampleList) ? nothing : leaveOutSampleList
 
     grnData = GrnData()
@@ -261,7 +261,7 @@ function buildNetwork(
 
     buildGrn = BuildGrn()
 
-    if modelSelection == "bStARS"
+    if modelSelection == :bStARS
         # Warm-start pass (coarse lambda range)
         # minLambda / maxLambda = nothing → auto-computed from data inside bstarsWarmStart
         constructSubsamples(data, grnData;
@@ -290,7 +290,7 @@ function buildNetwork(
                       instabilityLevel  = instabilityLevel,
                       targetInstability = targetInstability)
 
-    elseif modelSelection == "EBIC"
+    elseif modelSelection == :EBIC
         # Single full-data fit; no subsampling needed.
         # Saves per-gene chosen lambda + model size to ebic_lambda_summary.tsv.
         ebicSelect!(grnData, buildGrn;
@@ -303,7 +303,7 @@ function buildNetwork(
             writeEBICLambdaTable!(grnData; outputDir = outputDir)
         end
 
-    elseif modelSelection == "bEBIC"
+    elseif modelSelection == :bEBIC
         # Subsampled EBIC — requires subsample indices.
         # For each gene × subsample, fit LASSO and select the EBIC-optimal lambda.
         # Fills grnData.lambdaSS and buildGrn.networkStability (selection counts).
@@ -486,8 +486,8 @@ All keyword arguments are forwarded to the relevant sub-functions.
   `calcR2predFromStabilities` for out-of-sample R² evaluation
 - `minLambda::Union{Float64,Nothing} = nothing` — λ lower bound; `nothing` = auto-computed from data.
 - `maxLambda::Union{Float64,Nothing} = nothing` — λ upper bound; `nothing` = auto-computed from data.
-- `modelSelection::String = "bStARS"` — lambda selection method: "bStARS", "EBIC", or "bEBIC"
-- `gamma::Float64 = 0.5` — EBIC sparsity hyperparameter; only used when modelSelection != "bStARS"
+- `modelSelection::Symbol = :bStARS` — lambda selection method: `:bStARS`, `:EBIC`, or `:bEBIC`
+- `gamma::Float64 = 0.5` — EBIC sparsity hyperparameter; only used when modelSelection != `:bStARS`
 
 # Returns
 `BuildGrn` from the TFA-mode network (combined results written to `outputDir`)
@@ -516,13 +516,13 @@ function inferGRN(
     targetInstability::Float64      = 0.05,
     meanEdgesPerGene::Int           = 20,
     correlationWeight::Int          = 1,
-    instabilityLevel::String        = "Network",
+    instabilityLevel::Symbol = :network,
     useMeanEdgesPerGeneMode::Bool   = true,
     combineMethod::Symbol           = :max,
     timeLagFile::String             = "",
     timeLag::Real                   = 0.0,
     leaveOutSampleList::String      = "",
-    modelSelection::String          = "bStARS",
+    modelSelection::Symbol = :bStARS,
     gamma::Float64                  = 0.5
 )::BuildGrn
 
